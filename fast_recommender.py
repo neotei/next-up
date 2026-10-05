@@ -110,7 +110,7 @@ def select(user,best,recent,prefs):
             crowd_bonus=1+.2*math.tanh(crowd/5)
             rank=gain**1.5*crowd_bonus*efficiency**.35*confidence/(f['length']/60+.5)**.3
             farm.append(dict(row,accuracy=acc,estimatedPP=round(pp,1),estimatedGain=round(gain,2),
-                highAccuracyPP=round(estimate_pp(m,99),1),highAccuracyGain=round(r.weighted_gain(best,mid,estimate_pp(m,99)),2),
+                maxPP=round(estimate_pp(m,100),1),highAccuracyPP=round(estimate_pp(m,99),1),highAccuracyGain=round(r.weighted_gain(best,mid,estimate_pp(m,99)),2),
                 priority=rank,stage='Farm',focus='PP efficiency',provisional=False,
                 farmEvidence=round(m['farm']['weight'],6),topScoreUse=m['farm']['topScoreUse'],
                 retrySeconds=round(f['length']),efficiency=round(efficiency,2),goal=f'Full combo at {acc:.1f}% accuracy.',
