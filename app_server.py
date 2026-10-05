@@ -106,20 +106,22 @@ def build(state):
             recent = api(f'users/{user["id"]}/scores/recent?mode=osu&legacy_only=0&include_fails=1&limit=100', state)
             prefs = copy.deepcopy(state['prefs'])
             searches = {}
+            parsed_maps = {}
             def private_api(path, _config):
                 if state.get('cancelled'): raise ValueError('Calculation cancelled.')
                 if path not in searches: searches[path] = api(path, state)
                 return searches[path]
             def private_map(map_id):
                 if state.get('cancelled'): raise ValueError('Calculation cancelled.')
-                return map_file(map_id)
+                if map_id not in parsed_maps: parsed_maps[map_id] = map_file(map_id)
+                return parsed_maps[map_id]
             # Publish a smaller, fully checked list before widening the search.
             for reference_limit, poor_limit, discovery_limit in ((12,4,4),(24,8,8)):
                 if state.get('cancelled'): return
                 prefs.update(reference_limit=reference_limit, poor_limit=poor_limit,
                              discovery_limit=discovery_limit)
                 result = recommender.build(user, best, recent, prefs, private_api, private_map,
-                                           state['status'], lambda *_args: 0)
+                                           state['status'], recommender.weighted_gain)
                 result['updated'] = time.time()
                 with LOCK:
                     if not state.get('cancelled'):
@@ -261,16 +263,20 @@ def change(action):
                 state['prefs'] = {'max_stars':cap,'blocked_ids':blocked,'mod_caps':caps}
                 if state['result']:
                     state['result']['maxStars']=cap
-                    state['result']['maps']=[m for m in state['result']['maps'] if m['id'] not in blocked and m['stars']<=min(cap,caps.get(m['modKey'],12))]
+                    for list_key in ('maps','farmMaps'):
+                        state['result'][list_key]=[m for m in state['result'].get(list_key,[]) if m['id'] not in blocked and m['stars']<=min(cap,caps.get(m['modKey'],12))]
                     state['revision']+=1
             elif action == 'feedback':
                 if state['status']['busy']: return jsonify(error='Wait for the current calculation to finish.'),409
-                row=next((m for m in (state['result'] or {}).get('maps',[]) if m['id']==payload.get('id')),None)
+                result=state['result'] or {}
+                row=next((m for m in result.get('maps',[])+result.get('farmMaps',[])
+                          if m['id']==payload.get('id') and (not payload.get('key') or m['key']==payload['key'])),None)
                 if not row: raise ValueError('That map is no longer in your list.')
                 limit=max(1,row['stars']-.25)
                 prefs=state['prefs'];prefs['blocked_ids']=list(set(prefs['blocked_ids']+[row['id']]))
                 prefs['mod_caps'][row['modKey']]=min(prefs['mod_caps'].get(row['modKey'],12),limit)
-                state['result']['maps']=[m for m in state['result']['maps'] if m['id'] not in prefs['blocked_ids'] and m['stars']<=prefs['mod_caps'].get(m['modKey'],12)]
+                for list_key in ('maps','farmMaps'):
+                    state['result'][list_key]=[m for m in state['result'].get(list_key,[]) if m['id'] not in prefs['blocked_ids'] and m['stars']<=prefs['mod_caps'].get(m['modKey'],12)]
                 state['revision']+=1
                 return jsonify(ok=True,limit=prefs['mod_caps'][row['modKey']],preferences=prefs)
             elif action == 'reset-feedback':

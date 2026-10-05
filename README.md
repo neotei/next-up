@@ -1,6 +1,6 @@
 # Next up
 
-Next up suggests practice maps for osu!standard on lazer, using clean passes, recent failures and difficulty calculated with the selected mods. Its music-player interface shows a small map list and an accuracy goal, with normal-speed trials when the available evidence supports them.
+Next up offers Farm and Practice sections for osu!standard on lazer, using clean passes, recent failures and difficulty calculated with the selected mods. Practice offers manageable challenges and normal-speed trials when supported by evidence. Farm ranks playable FC targets by estimated weighted pp gain, replacing an existing best score on the same beatmap rather than counting it twice. Unranked adjustments and unfamiliar mod trials are excluded from Farm; estimates omit bonus pp and may differ from live osu! values. Both sections share map downloads, show a checked first list early and refine it in the background.
 
 Players can enter their osu! ID and sign in through osu!'s authorization page. Each session has its own recommendations and feedback, and passwords are entered only on osu!'s website. The application requests the `public` and `identify` permissions, which provide the signed-in profile and public gameplay data.
 

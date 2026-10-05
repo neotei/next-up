@@ -6,7 +6,7 @@ import statistics
 import urllib.parse
 import rosu_pp_py as rosu
 
-VERSION = 4
+VERSION = 5
 DEFAULT_CAP = 5.25
 FEATURE_SCALES = {'stars': .45, 'aim': .35, 'speed': .32, 'ar': .65,
                   'od': .7, 'cs': .65, 'density': 1.2, 'slider': .2,
@@ -77,7 +77,8 @@ def features(obj, beatmap, mods):
             'slider': obj.n_sliders / max(1, obj.n_objects), 'length': duration,
             'bpm': (beatmap.get('bpm') or obj.bpm) * effective.clock_rate,
             'combo': diff.max_combo, 'objects': obj.n_objects,
-            'baseStars': beatmap.get('difficulty_rating', diff.stars), 'rate': effective.clock_rate}
+            'baseStars': beatmap.get('difficulty_rating', diff.stars), 'rate': effective.clock_rate,
+            '_difficulty':diff}
 
 
 def distance(a, b):
@@ -132,7 +133,7 @@ def reading_floor(anchors, poor):
     return round(max(0,floor),2)
 
 
-def assess(candidate, anchors, cap, attempts, min_ar=9.5):
+def assess(candidate, anchors, cap, attempts, min_ar=9.5, farming=False):
     """Practice fit: isolate one modest challenge while holding reading comfortable."""
     f = candidate['features']
     transfer=candidate.get('transfer',False)
@@ -165,7 +166,7 @@ def assess(candidate, anchors, cap, attempts, min_ar=9.5):
     nearest = neighbors[0]
     n = nearest['features']
     similarity = distance(f, n)
-    if similarity > 1.4 or f['length'] < 40:
+    if similarity > 1.4 or f['length'] < (20 if farming else 40):
         return None
     # No more than one component can exceed the matched clean reference by >5%.
     # Aggregate aim/speed attributes are proxies, not diagnoses of jumps or streams.
@@ -184,14 +185,14 @@ def assess(candidate, anchors, cap, attempts, min_ar=9.5):
     if score and (not score.get('passed') or score.get('accuracy',0)<.90 or
                   miss_count(score)/max(1,f['objects'])>.03):
         return None
-    if score and score.get('accuracy',0)>=.985 and miss_count(score)==0:
+    if not farming and score and score.get('accuracy',0)>=.985 and miss_count(score)==0:
         return None  # Already mastered; use new patterns instead of farming the same FC.
     weights = [1/(.2+distance(f,a['features'])) for a in neighbors]
     expected = sum(a['score']['accuracy']*100*w for a,w in zip(neighbors,weights))/sum(weights)-.4-.35*similarity
     if score:
-        target = min(98.5, score['accuracy']*100+.5)
+        target = min(99.5 if farming else 98.5, score['accuracy']*100+.5)
     else:
-        target = max(94, min(98,expected))
+        target = max(94, min(99 if farming else 98,expected))
     if transfer:
         focus,stage='Mod familiarisation','Trial'
         target=min(target,95)
@@ -215,6 +216,27 @@ def assess(candidate, anchors, cap, attempts, min_ar=9.5):
             'challenge':elevated[0] if elevated else None}
 
 
+def weighted_gain(scores, beatmap_id, proposed):
+    by_map={}
+    for score in scores:
+        key=score.get('beatmap_id') or score.get('beatmap',{}).get('id')
+        if key is not None:by_map[key]=max(by_map.get(key,0),score.get('pp') or 0)
+    before=sorted(by_map.values(),reverse=True)
+    by_map[beatmap_id]=max(by_map.get(beatmap_id,0),proposed)
+    after=sorted(by_map.values(),reverse=True)
+    total=lambda values:sum(pp*.95**i for i,pp in enumerate(values[:1000]))
+    return max(0,total(after)-total(before))
+
+
+def farm_eligible(mods):
+    for mod in mods:
+        if mod['acronym'] not in ('HD','HR','DT','NC','CL'):return False
+        settings=mod.get('settings',{})
+        if any(key!='speed_change' for key in settings):return False
+        if settings and (mod['acronym'] not in ('DT','NC') or settings['speed_change']!=1.5):return False
+    return True
+
+
 def build(user, best, recent, config, api, map_file, status, gain_fn):
     cap = min(12, max(1, float(config.get('max_stars', DEFAULT_CAP))))
     min_ar = None
@@ -226,7 +248,9 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
     # Limit expensive references, while preserving good lower-pp plays and distinct setups.
     possible = [s for s in samples.values() if s.get('passed') and s.get('accuracy',0)>=.935
                 and s['beatmap'].get('ranked') in (1,2)]
-    possible.sort(key=lambda s:(bool(s.get('is_perfect_combo')),s['accuracy'],-miss_count(s)),reverse=True)
+    # Start with strong reliable passes, rather than letting easy SS scores consume
+    # the small reference budget before the player's actual range is represented.
+    possible.sort(key=lambda s:(miss_count(s)<=1,s['accuracy']>=.945,s.get('pp') or 0,s['accuracy']),reverse=True)
     chosen, seen = [], set()
     reference_limit=int(config.get('reference_limit',100))
     buckets=collections.defaultdict(list)
@@ -323,7 +347,7 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
         for _,b,bs in sorted(pool,key=lambda row:row[0])[:int(config.get('discovery_limit',60))]:
             ckey=(b['id'],key)
             candidates.setdefault(ckey,{'map':b,'set':bs,'score':None,'mods':mods,'transfer':key in transfer_keys})
-    rows=[];rejected=collections.Counter()
+    rows=[];farm_rows=[];rejected=collections.Counter()
     for i,(key,c) in enumerate(candidates.items()):
         if c['map']['id'] in config.get('blocked_ids', []):
             rejected['playerFeedback']+=1
@@ -335,7 +359,11 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
             group_cap=min(cap,float(config.get('mod_caps',{}).get(key[1],cap)))
             c['transfer']=key[1] in transfer_keys
             matched=assess(c,refs,group_cap,attempts.get(key,[]),reading_floors.get(key[1],11))
-            if not matched:rejected['outsidePlayableRange']+=1;continue
+            farm_match=(assess(c,refs,group_cap,attempts.get(key,[]),reading_floors.get(key[1],11),farming=True)
+                        if not c['transfer'] and farm_eligible(c['mods']) else None)
+            if not matched and not farm_match:rejected['outsidePlayableRange']+=1;continue
+            practice_match=matched
+            matched=matched or farm_match
             b,bs,mods,f=c['map'],c['set'],c['mods'],c['features']
             acc=matched['accuracy']
             nearest=matched['neighbor'];ns=nearest['score'];nf=nearest['features']
@@ -351,7 +379,7 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
             if c.get('transfer'):
                 reason+=' This setup has limited direct evidence. The match uses actual physical demands from your clean plays; treat it as a calibration trial, not established ability.'
             style='Aim leaning' if f['aim']>f['speed']*1.12 else 'Speed leaning' if f['speed']>f['aim']*1.12 else 'Balanced'
-            rows.append({'id':b['id'],'key':str(b['id'])+'|'+key[1],'modKey':key[1],'setId':bs['id'],'title':bs['title'],'artist':bs['artist'],
+            row={'id':b['id'],'key':str(b['id'])+'|'+key[1],'modKey':key[1],'setId':bs['id'],'title':bs['title'],'artist':bs['artist'],
                          'version':b['version'],'mapper':bs.get('creator',''),'stars':round(f['stars'],2),
                          'baseStars':round(f['baseStars'],2),'bpm':round(f['bpm']),'length':round(f['length']),
                          'mods':label(mods),'modSettings':mods,'setupInstructions':('Difficulty Adjust: AR '+str(round(f['ar'],1))+'; leave other settings unchanged. No speed mods.' if any(m['acronym']=='DA' for m in mods) else 'Use '+label(mods)+'.'),'accuracy':acc,'kind':kind,'style':style,
@@ -363,7 +391,18 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
                          'provisional':bool(c.get('transfer')),'support':matched['support'],'ar':round(f['ar'],1),'od':round(f['od'],1),'cs':round(f['cs'],1),
                          'evidence':{'title':nbs.get('title',''),'version':ns['beatmap'].get('version',''),
                                      'stars':round(nf['stars'],2),'accuracy':round(ns['accuracy']*100,2),
-                                     'comboPercent':round(coverage(ns,nf)*100),'id':ns['beatmap']['id']}})
+                                     'comboPercent':round(coverage(ns,nf)*100),'id':ns['beatmap']['id']}}
+            if practice_match:rows.append(row)
+            if farm_match:
+                target=farm_match['accuracy']
+                pp=rosu.Performance(mods=mods,lazer=True,accuracy=target,misses=0).calculate(f['_difficulty']).pp
+                gain=gain_fn(best,b['id'],pp)
+                if gain>.1:
+                    confidence=math.exp(-farm_match['similarity']*.6)*min(1,farm_match['support']/4)
+                    farm_rows.append(dict(row,accuracy=target,estimatedPP=round(pp,1),estimatedGain=round(gain,2),
+                        priority=gain*confidence,stage='Farm',focus='PP gain',provisional=False,
+                        goal=f'Full combo at {target:.1f}% accuracy.',
+                        reason=f'A full combo at {target:.1f}% is estimated at {pp:.1f} pp, adding about {gain:.2f} weighted profile pp after replacing any better existing score on this map. Ranked by estimated gain adjusted for similarity and supporting clean plays; this is a target, not a guaranteed result.'))
         except (ValueError,RuntimeError,OSError):skipped+=1
     rows.sort(key=lambda r:r['priority'],reverse=True)
     buckets=collections.defaultdict(list)
@@ -387,9 +426,16 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
     comfortable=max((p['ceiling'] for p in profiles),default=cap)
     warning='Map discovery was unavailable; only known attempts were checked.' if discovery_failed else None
     if not diverse:warning='No practice maps meet your reading and skill limits. Collect more comfortable passes, then refresh.'
+    farm_rows.sort(key=lambda row:row['priority'],reverse=True)
+    farms=[];farm_ids=set()
+    for row in farm_rows:
+        if row['id'] in farm_ids:continue
+        farms.append(row);farm_ids.add(row['id'])
+        if len(farms)>=12:break
     return {'algorithmVersion':VERSION,'demo':False,'user':user['username'],'userId':user['id'],
             'profilePP':round(user.get('statistics',{}).get('pp',0)), 'maps':diverse,
             'minAR':min(reading_floors.values(),default=9.5),'mode':'practice','maxStars':cap,'comfortableCeiling':round(comfortable,2),'profiles':profiles,
             'sample':len(samples),'cleanSample':sum(len(v) for k,v in groups.items() if k not in transfer_keys),'bestCount':len(best),
             'warning':warning,'skipped':skipped,'rejected':dict(rejected),
-            'summary':'Practice uses readable maps, nearby clean passes and at most one modest challenge. Aggregate map attributes cannot diagnose technique or specific pattern weaknesses.'}
+            'farmMaps':farms,'farmWarning':None if farms else 'No supported maps offer a positive estimated pp gain within your current reading and difficulty limits.',
+            'summary':'Practice uses readable maps, nearby clean passes and at most one modest challenge. Farm estimates FC pp and weighted profile gain from the same playable pool, excluding unranked adjustments and unfamiliar mod trials. Calculator estimates may differ from live osu! pp and exclude bonus pp.'}
