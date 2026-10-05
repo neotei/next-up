@@ -70,8 +70,10 @@ def select(user,best,recent,prefs):
         c={'map':m['base'],'features':f,'mods':mods,'score':score,'transfer':key in transfers}
         history=attempts.get((mid,key),[])
         fit=model.assess(c,refs,group_cap,history,floors[key])
+        band_median=PP_MEDIANS.get((key,round(f['stars']*2)),m['curve'].get('99',0))
+        intrinsic_efficiency=m['curve'].get('99',0)/max(1,band_median)
         farm_fit=(model.assess(c,refs,group_cap,history,floors[key],farming=True)
-                  if key not in transfers and m['curve'] and m['farm']['weight']>0 else None)
+                  if key not in transfers and m['curve'] and (m['farm']['weight']>0 or intrinsic_efficiency>=1.1) else None)
         if not fit and not farm_fit:continue
         matched=fit or farm_fit
         ref=matched['neighbor'];ns=ref['score'];nf=ref['features'];nb=ns['beatmap'];nbs=ns.get('beatmapset',{})
@@ -96,7 +98,7 @@ def select(user,best,recent,prefs):
             if gain<=.05:continue
             confidence=farm_fit['confidence']
             median=PP_MEDIANS.get((key,round(f['stars']*2)),pp)
-            efficiency=max(.5,min(2,pp/max(1,median)))
+            efficiency=max(.5,min(2,intrinsic_efficiency))
             # Crowd top-score prevalence supplies farm evidence; short attempts reduce work.
             crowd=math.log1p(m['farm']['weight']*10000)
             # Gain leads the ranking. Bounded farm/effort bonuses cannot make
@@ -112,7 +114,7 @@ def select(user,best,recent,prefs):
                 fcProbability=farm_fit['fcProbability'],confidence=confidence,accuracyLow=farm_fit['accuracyLow'],accuracyHigh=farm_fit['accuracyHigh'],
                 farmEvidence=round(m['farm']['weight'],6),topScoreUse=m['farm']['topScoreUse'],
                 retrySeconds=round(f['length']),efficiency=round(efficiency,2),goal=f'Full combo at {acc:.1f}% accuracy.',
-                reason=f'This map appears repeatedly in community top scores after popularity and age adjustments. Its {round(f["length"])}-second attempts and {pp:.1f} estimated FC pp at {acc:.1f}% make it a pp-efficiency pick within your demonstrated range; an improved score is estimated to add {gain:.2f} weighted profile pp.'))
+                reason=('This map appears repeatedly in community top scores after popularity and age adjustments. ' if m['farm']['weight']>0 else f'Its 99% FC pp is {intrinsic_efficiency:.2f} times the median for this mod and star band in the catalogue. ')+f'Its {round(f["length"])}-second attempts and {pp:.1f} estimated FC pp at {acc:.1f}% make it a pp-efficiency pick within your demonstrated range; an improved score is estimated to add {gain:.2f} weighted profile pp.'))
     def distinct(rows,limit):
         seen=set();out=[]
         for row in sorted(rows,key=lambda row:row['priority'],reverse=True):

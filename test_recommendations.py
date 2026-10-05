@@ -38,5 +38,6 @@ one=f.select({'id':1,'username':'A'},scores,[],{'max_stars':4.5})
 two=f.select({'id':999,'username':'B'},scores,[],{'max_stars':4.5})
 assert [x['key'] for x in one['maps']]==[x['key'] for x in two['maps']]
 assert one['maps'] and all(x['stars']<=4.5 for x in one['maps']+one['farmMaps'])
+assert all(x['farmEvidence']>0 or x['efficiency']>=1.1 for x in one['farmMaps'])
 print('PASS: account-neutral results, sparse profiles, failed attempts, early quits, reading and speed isolation, caps, no fabricated UR, real burst/stream clock rate.')
 print('Independent NM profile:',len(one['maps']),'Practice and',len(one['farmMaps']),'Farm;',one['selectionMs'],'ms')

@@ -16,7 +16,7 @@ The pass/FC figures are smoothed local heuristics, not statistically calibrated 
 
 Rank uses estimated weighted profile gain, estimated FC likelihood, retry duration, uncertainty, relative pp efficiency and community farm prevalence. This favours valuable, repeatable completions over maximum theoretical pp alone. Maximum pp is a 100% FC; predicted pp is also conditional on an FC at predicted accuracy. The estimate does not include failed-attempt pp or bonus pp. Top-100 profile weighting is approximate.
 
-Community prevalence comes from osu!pps top-score use, adjusted for popularity and map age. It is a proxy for farm efficiency, not proof that a map is objectively overweighted under the current calculator. Crowdsourced data and the current pp system can disagree.
+Candidates qualify through community prevalence or a current 99% FC pp value at least 10% above the catalogue median for their effective mod and half-star band. This second route avoids depending entirely on historical crowd data when the calculator or mod distribution differs. Both routes still require the same personal performance fit. Community prevalence comes from osu!pps top-score use, adjusted for popularity and map age. It is a proxy for farm efficiency, not proof that a map is objectively overweighted under the current calculator. Crowdsourced data and the current pp system can disagree.
 
 ## Practice
 
