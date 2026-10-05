@@ -105,19 +105,26 @@ def build(state):
                 if len(page)<100: break
             recent = api(f'users/{user["id"]}/scores/recent?mode=osu&legacy_only=0&include_fails=1&limit=100', state)
             prefs = copy.deepcopy(state['prefs'])
+            searches = {}
             def private_api(path, _config):
                 if state.get('cancelled'): raise ValueError('Calculation cancelled.')
-                return api(path, state)
+                if path not in searches: searches[path] = api(path, state)
+                return searches[path]
             def private_map(map_id):
                 if state.get('cancelled'): raise ValueError('Calculation cancelled.')
                 return map_file(map_id)
-            result = recommender.build(user, best, recent, prefs, private_api, private_map,
-                                       state['status'], lambda *_args: 0)
-            result['updated'] = time.time()
-            with LOCK:
-                if not state.get('cancelled'):
-                    state['result'] = result
-                    state['revision'] += 1
+            # Publish a smaller, fully checked list before widening the search.
+            for reference_limit, poor_limit, discovery_limit in ((12,4,4),(24,8,8)):
+                if state.get('cancelled'): return
+                prefs.update(reference_limit=reference_limit, poor_limit=poor_limit,
+                             discovery_limit=discovery_limit)
+                result = recommender.build(user, best, recent, prefs, private_api, private_map,
+                                           state['status'], lambda *_args: 0)
+                result['updated'] = time.time()
+                with LOCK:
+                    if not state.get('cancelled'):
+                        state['result'] = result
+                        state['revision'] += 1
     except Exception as error:
         state['status']['error'] = str(error) if isinstance(error, ValueError) else 'The list could not be calculated; please try again.'
     finally:

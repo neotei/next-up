@@ -228,11 +228,18 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
                 and s['beatmap'].get('ranked') in (1,2)]
     possible.sort(key=lambda s:(bool(s.get('is_perfect_combo')),s['accuracy'],-miss_count(s)),reverse=True)
     chosen, seen = [], set()
+    reference_limit=int(config.get('reference_limit',100))
+    buckets=collections.defaultdict(list)
     for s in possible:
         key=(s['beatmap']['id'],signature(s.get('mods',[])))
         if key not in seen:
-            seen.add(key);chosen.append(s)
-        if len(chosen)>=100:break
+            seen.add(key);buckets[key[1]].append(s)
+    # Round-robin setups so a short first pass does not erase less-used mods.
+    while buckets and len(chosen)<reference_limit:
+        for key in list(buckets):
+            chosen.append(buckets[key].pop(0))
+            if not buckets[key]:del buckets[key]
+            if len(chosen)>=reference_limit:break
     groups=collections.defaultdict(list)
     analyzed=[]
     memo={}
@@ -252,11 +259,17 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
                 groups[signature(s.get('mods',[]))].append(record)
         except (ValueError,RuntimeError,OSError):skipped+=1
     poor_groups=collections.defaultdict(list)
+    poor_seen=set()
+    poor_limit=int(config.get('poor_limit',100))
     for score in recent:
         if not supported(score) or not score.get('beatmap'):
             continue
         if score.get('passed') and score.get('accuracy',0)>=.92:
             continue
+        poor_key=(score['beatmap']['id'],signature(score.get('mods',[])))
+        if poor_key in poor_seen:continue
+        if len(poor_seen)>=poor_limit:break
+        poor_seen.add(poor_key)
         try:
             poor_groups[signature(score.get('mods',[]))].append(
                 {'score':score,'features':calculate_feature(score['beatmap'],score.get('mods',[]))})
@@ -307,7 +320,7 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
                 if b.get('difficulty_rating',0)>center+.4 or b.get('difficulty_rating',0)<center-.8:continue
                 rough=abs(b['difficulty_rating']-center)*2+abs((b.get('bpm') or 180)-base_bpm)/70+abs((b.get('total_length') or 90)-base_length)/150
                 pool.append((rough,b,bs))
-        for _,b,bs in sorted(pool,key=lambda row:row[0])[:60]:
+        for _,b,bs in sorted(pool,key=lambda row:row[0])[:int(config.get('discovery_limit',60))]:
             ckey=(b['id'],key)
             candidates.setdefault(ckey,{'map':b,'set':bs,'score':None,'mods':mods,'transfer':key in transfer_keys})
     rows=[];rejected=collections.Counter()
