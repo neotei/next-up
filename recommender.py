@@ -137,7 +137,11 @@ def assess(candidate, anchors, cap, attempts, min_ar=9.5, farming=False):
     """Practice fit: isolate one modest challenge while holding reading comfortable."""
     f = candidate['features']
     transfer=candidate.get('transfer',False)
-    if len(anchors)<2 or f['ar'] < min_ar-(.08 if transfer else 0) or f['stars'] > min(cap, ceiling(anchors, cap)+(-.10 if transfer else .18)):
+    # Farm can match a proven upper-range clean play. The general practice
+    # percentile must not erase it; component limits below still enforce fit.
+    star_limit=(max((a['features']['stars'] for a in anchors),default=0)+.08
+                if farming else ceiling(anchors, cap)+(-.10 if transfer else .18))
+    if len(anchors)<2 or f['ar'] < min_ar-(.08 if transfer else 0) or f['stars'] > min(cap, star_limit):
         return None
     severe = [s for s in attempts if not s.get('passed', False) and s.get('accuracy', 0) < .9]
     recent_clean = any(s.get('passed', False) and s.get('accuracy', 0) >= .945 and

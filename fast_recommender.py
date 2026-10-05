@@ -105,8 +105,12 @@ def select(user,best,recent,prefs):
             efficiency=max(.5,min(2,pp/max(1,median)))
             # Crowd top-score prevalence supplies farm evidence; short attempts reduce work.
             crowd=math.log1p(m['farm']['weight']*10000)
-            rank=crowd**1.5*efficiency*confidence*(gain+.5)/(f['length']/60+.5)**.8
+            # Gain leads the ranking. Bounded farm/effort bonuses cannot make
+            # a tiny upgrade beat a substantial, physically supported target.
+            crowd_bonus=1+.2*math.tanh(crowd/5)
+            rank=gain**1.5*crowd_bonus*efficiency**.35*confidence/(f['length']/60+.5)**.3
             farm.append(dict(row,accuracy=acc,estimatedPP=round(pp,1),estimatedGain=round(gain,2),
+                highAccuracyPP=round(estimate_pp(m,99),1),highAccuracyGain=round(r.weighted_gain(best,mid,estimate_pp(m,99)),2),
                 priority=rank,stage='Farm',focus='PP efficiency',provisional=False,
                 farmEvidence=round(m['farm']['weight'],6),topScoreUse=m['farm']['topScoreUse'],
                 retrySeconds=round(f['length']),efficiency=round(efficiency,2),goal=f'Full combo at {acc:.1f}% accuracy.',
@@ -135,7 +139,7 @@ def select(user,best,recent,prefs):
                'count':0 if key in transfers else len(refs),'minAR':floors[key],
                'accuracy':round(statistics.median(a['score']['accuracy']*100 for a in refs),2)}
               for key,refs in groups.items() if len(refs)>=2]
-    return {'algorithmVersion':6,'demo':False,'user':user['username'],'userId':user['id'],
+    return {'algorithmVersion':7,'demo':False,'user':user['username'],'userId':user['id'],
         'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
         'mode':'practice','maxStars':cap,'comfortableCeiling':max((p['ceiling'] for p in profiles),default=cap),
         'profiles':profiles,'sample':len(samples),'cleanSample':sum(p['count'] for p in profiles),'bestCount':len(best),
