@@ -1,5 +1,6 @@
 """Private, per-session osu! authorization and practice recommendations."""
 import copy
+import collections
 import json
 import math
 import os
@@ -13,6 +14,7 @@ import urllib.request
 from flask import Flask, jsonify, redirect, request, session, send_from_directory
 import rosu_pp_py as rosu
 import recommender
+import patterns
 import fast_recommender
 
 ROOT = Path(__file__).resolve().parent
@@ -103,31 +105,53 @@ def build(state):
             recent=api(f'users/{user["id"]}/scores/recent?mode=osu&legacy_only=0&include_fails=1&limit=100',state)
             snapshot={'best':best,'recent':recent,'fetched':time.time()}
         if state.get('cancelled'):return
-        known=[];missing=[]
-        for score in snapshot['best']:
-            if not recommender.supported(score) or not score.get('beatmap'):continue
-            key=(score['beatmap']['id'],recommender.signature(fast_recommender.canonical(score.get('mods',[]))))
-            item=fast_recommender.INDEX.get(key)
-            feature=item['features'] if item else fast_recommender.REFERENCE_FEATURES.get(key)
-            if feature and recommender.anchor(score,feature,state['prefs']['max_stars']):known.append(key)
-            elif not feature and score.get('passed') and score.get('accuracy',0)>=.945 and recommender.miss_count(score)<=1:missing.append((key,score))
-        if len(known)<3:
-            # Unusual profiles need a small one-time reference calibration, never
-            # one download per suggested map. Public features are reusable across users.
-            for key,score in missing[:3]:
+        def publish():
+            result=fast_recommender.select(user,snapshot['best'],snapshot['recent'],copy.deepcopy(state['prefs']))
+            result['historyCoverage']={'recent':len(snapshot['recent']),'best':len(snapshot['best']),
+                'scope':'API-visible recent scores, merged within this server session; not every play ever made.'}
+            with LOCK:
+                if not state.get('cancelled'):
+                    state['scores']=snapshot;state['result']=result;state['revision']+=1
+        # Present cached-feature recommendations before bounded background enrichment.
+        publish()
+        if not snapshot.get('enriched'):
+            for offset in (100,200,300,400):
+                if state.get('cancelled') or len(snapshot['recent'])<offset:break
+                state['status']['message']='Checking more recent attempts while your initial list is available…'
+                page=api(f'users/{user["id"]}/scores/recent?mode=osu&legacy_only=0&include_fails=1&limit=100&offset={offset}',state)
+                if not page:break
+                snapshot['recent'].extend(page)
+            prior=state.get('history',[])
+            combined={s.get('id'):s for s in snapshot['recent']+prior if s.get('id') is not None}
+            snapshot['recent']=list(combined.values())[:2000]
+            state['history']=snapshot['recent']
+            candidates=collections.defaultdict(list)
+            for score in snapshot['recent']+snapshot['best']:
+                if not recommender.supported(score) or not score.get('beatmap'):continue
+                key=(score['beatmap']['id'],recommender.signature(fast_recommender.canonical(score.get('mods',[]))))
+                if key in fast_recommender.INDEX or key in fast_recommender.REFERENCE_FEATURES:continue
+                candidates[(key[1],bool(score.get('passed')))].append((key,score))
+            # Round-robin mods and successes/failures, not three owner-like top scores.
+            selected=[];seen=set()
+            for depth in range(6):
+                for values in candidates.values():
+                    ordered=sorted(values,key=lambda x:(not x[1].get('passed'),-x[1].get('accuracy',0)))
+                    if depth>=len(ordered):continue
+                    key,score=ordered[depth]
+                    if key in seen:continue
+                    seen.add(key);selected.append((key,score))
+            for key,score in selected[:8]:
                 if state.get('cancelled'):return
-                state['status']['message']='Calibrating an uncatalogued clean play…'
+                state['status']['message']='Learning uncatalogued performance references; your initial list remains available…'
                 try:
                     feature=recommender.features(map_file(key[0]),score['beatmap'],score.get('mods',[]))
                     feature.pop('_difficulty',None)
+                    feature['bpm']=map_file(key[0]).bpm*feature['rate']
+                    feature.update(patterns.describe(CACHE/f'{key[0]}.osu',feature['rate']))
                     fast_recommender.REFERENCE_FEATURES[key]=feature
                 except (ValueError,OSError,RuntimeError):continue
-        result=fast_recommender.select(user,snapshot['best'],snapshot['recent'],copy.deepcopy(state['prefs']))
-        with LOCK:
-            if not state.get('cancelled'):
-                state['scores']=snapshot
-                state['result']=result
-                state['revision']+=1
+            snapshot['enriched']=True
+        publish()
     except Exception as error:
         state['status']['error'] = str(error) if isinstance(error, ValueError) else 'The list could not be calculated; please try again.'
     finally:

@@ -12,7 +12,7 @@ def mod_key(mods):
         normalized.append(value)
     return r.signature(normalized)
 
-def session(maps,best,recent):
+def session(maps,best,recent,diagnosis=None):
     if not maps:return None
     established=[m for m in maps if not m['provisional']]
     pool=established or maps
@@ -23,12 +23,11 @@ def session(maps,best,recent):
     clean=[s for s in best if s.get('passed') and s.get('accuracy',0)>=.945 and r.miss_count(s)<=1]
     median=statistics.median(s['accuracy']*100 for s in clean) if clean else None
     focus='Accuracy control' if median is not None and median<98 else 'Consistency'
-    if focus=='Accuracy control':
-        explanation=f'Your clean reference scores have a median accuracy of {median:.1f}%. Start with timing control on readable maps before raising physical difficulty.'
-        instruction='Complete each map twice, listening for uneven tapping and noting where 100s appear. Compare both runs rather than keeping only the better score.'
+    if diagnosis:
+        focus=diagnosis['focus'];explanation=diagnosis['evidence']
     else:
-        explanation='Use complete, readable runs to test whether clean sections hold together across a whole map. Score summaries cannot establish a specific pattern weakness.'
-        instruction='Complete each map twice without restarting after a miss. Notice whether errors recur in the same section or move between runs.'
+        explanation='Compare complete runs on varied readable maps before raising the challenge.'
+    instruction='Complete each map twice without restarting after a miss, then compare accuracy and misses. Keep the other demands stable while checking the focus named above.'
     used=set()
     def take(values,n):
         out=[]
@@ -39,9 +38,9 @@ def session(maps,best,recent):
     warm=take(sorted(pool,key=lambda m:(m['stage']=='Stretch',m['stars'],m['length'])),2)
     if focus=='Accuracy control':
         ordered=sorted(pool,key=lambda m:(m['stage']=='Stretch',-m['support'],abs(m['length']-100)))
-    else:ordered=sorted(pool,key=lambda m:(m['stage']=='Stretch',-m['length'],-m['support']))
+    else:ordered=sorted(pool,key=lambda m:(m['focus']!=focus,m['stage']=='Trial',-m['priority']))
     drill=take(ordered,3)
-    check=take(sorted(pool,key=lambda m:(m['id'] not in scores,m['stage']=='Stretch',-m['support'])),1)
+    check=take(sorted(pool,key=lambda m:(m['id'] not in scores,m['stage']=='Stretch',m['id'])),1)
     blocks=[('warm','Warm up','Play each once; use a relaxed grip and finish the run.',warm),
             ('focus',focus,instruction,drill),
             ('check','Check transfer','Play once without a retry and compare with the focused block. Return to this map next session under the same mods.',check)]

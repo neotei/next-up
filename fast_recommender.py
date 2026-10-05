@@ -8,6 +8,7 @@ import statistics
 import time
 import recommender as r
 import training
+import performance_model as model
 
 CATALOG=json.loads((Path(__file__).parent/'catalog.json').read_text())
 MAPS=CATALOG['maps']
@@ -44,40 +45,32 @@ def select(user,best,recent,prefs):
     attempts=collections.defaultdict(list);existing={}
     for s in samples.values():
         key=(s['beatmap']['id'],r.signature(canonical(s.get('mods',[]))))
-        existing[key]=s
+        if s.get('passed') and (key not in existing or s.get('accuracy',0)>existing[key].get('accuracy',0)):existing[key]=s
         m=INDEX.get(key)
         feature=m['features'] if m else REFERENCE_FEATURES.get(key)
         if not feature:continue
         record={'score':s,'features':feature}
-        if r.anchor(s,feature,cap):groups[key[1]].append(record)
-        elif not s.get('passed') or s.get('accuracy',0)<.92:poor[key[1]].append(record)
+        groups[key[1]].append(record)
+        if not s.get('passed') or s.get('accuracy',0)<.92:poor[key[1]].append(record)
     for s in recent:
         if r.supported(s) and s.get('beatmap'):
             attempts[(s['beatmap']['id'],r.signature(canonical(s.get('mods',[]))))].append(s)
-    floors={key:r.reading_floor(refs,poor[key]) for key,refs in groups.items()}
-    physical=[a for key,refs in groups.items() for a in refs
-              if all(m['acronym'] in ('DT','NC','CL') for m in a['score'].get('mods',[]))]
+    groups={key:model.prepare(refs) for key,refs in groups.items()}
+    floors={key:min((a['features']['ar'] for a in refs if model.success(a)),default=0) for key,refs in groups.items()}
     transfers=set()
-    if len(physical)>=3:
-        shared=r.reading_floor(physical,[a for values in poor.values() for a in values])
-        target=statistics.median(a['features']['ar'] for a in physical)
-        target=min((9.3,9.5,9.7,10.),key=lambda ar:abs(ar-target))
-        for mods in ([],[{'acronym':'HR'}],[{'acronym':'DA','settings':{'approach_rate':target}}]):
-            key=r.signature(mods)
-            if len(groups.get(key,[]))<2:
-                groups[key]=physical;floors[key]=max(shared,r.reading_floor(physical,poor[key]));transfers.add(key)
+    diagnosis=model.diagnose(groups)
     practice=[];farm=[]
     for m in MAPS:
         mid=m['id'];mods=m['mods'];key=r.signature(mods);refs=groups.get(key,[])
         f=m['features']
-        if mid in blocked or len(refs)<2:continue
+        if mid in blocked or not refs:continue
         group_cap=min(cap,float(prefs.get('mod_caps',{}).get(key,cap)))
-        if f['stars']>group_cap or f['ar']<floors.get(key,11)-.08:continue
+        if f['stars']>group_cap:continue
         score=existing.get((mid,key))
         c={'map':m['base'],'features':f,'mods':mods,'score':score,'transfer':key in transfers}
         history=attempts.get((mid,key),[])
-        fit=r.assess(c,refs,group_cap,history,floors[key])
-        farm_fit=(r.assess(c,refs,group_cap,history,floors[key],farming=True)
+        fit=model.assess(c,refs,group_cap,history,floors[key])
+        farm_fit=(model.assess(c,refs,group_cap,history,floors[key],farming=True)
                   if key not in transfers and m['curve'] and m['farm']['weight']>0 else None)
         if not fit and not farm_fit:continue
         matched=fit or farm_fit
@@ -88,20 +81,20 @@ def select(user,best,recent,prefs):
              'version':m['version'],'mapper':'','stars':round(f['stars'],2),'baseStars':round(f['baseStars'],2),
              'bpm':round(f['bpm']),'length':round(f['length']),'ar':ar,'od':round(f['od'],1),'cs':round(f['cs'],1),
              'mods':r.label(mods),'modSettings':mods,'setupInstructions':('Difficulty Adjust: AR '+str(ar)+'; leave other settings unchanged.' if da else 'Use '+r.label(mods)+'.'),
-             'accuracy':matched['accuracy'],'kind':'retry' if score else 'new',
+             'accuracy':matched['accuracy'],'confidence':matched['confidence'],'passProbability':matched['passProbability'],'burstBpm':f.get('burstBpm',0),'streamBpm':f.get('streamBpm',0),'streamNotes':f.get('streamNotes',0),'kind':'retry' if score else 'new',
              'cover':f'https://assets.ppy.sh/beatmaps/{m["setId"]}/covers/cover@2x.jpg',
              'url':f'https://osu.ppy.sh/beatmapsets/{m["setId"]}#osu/{mid}',
              'priority':matched['suitability'],'focus':matched['focus'],'stage':matched['stage'],'goal':matched['goal'],
              'style':'Aim leaning' if f['aim']>f['speed']*1.12 else 'Speed leaning' if f['speed']>f['aim']*1.12 else 'Balanced',
-             'provisional':key in transfers,'support':matched['support'],'fit':'Similar clean plays',
-             'reason':f'Matched to {nbs.get("title","a clean play")} [{nb.get("version","")}] at {nf["stars"]:.2f} stars and {ns["accuracy"]*100:.2f}% accuracy, while keeping reading comfortable and limiting increases in physical demands.',
+             'provisional':matched['provisional'],'support':matched['support'],'fit':'Comparable outcomes',
+             'reason':f'Compared against {matched["support"]} different maps, including {nbs.get("title","a clean play")} [{nb.get("version","")}] at {nf["stars"]:.2f} stars and {ns["accuracy"]*100:.2f}% accuracy, using recent outcomes as well as top scores to limit simultaneous increases in demand.',
              'evidence':{'id':nb['id'],'title':nbs.get('title',''),'version':nb.get('version',''),
                          'stars':round(nf['stars'],2),'accuracy':round(ns['accuracy']*100,2),'comboPercent':round(r.coverage(ns,nf)*100)}}
         if fit:practice.append(row)
         if farm_fit:
             acc=farm_fit['accuracy'];pp=estimate_pp(m,acc);gain=r.weighted_gain(best,mid,pp)
             if gain<=.05:continue
-            confidence=math.exp(-farm_fit['similarity']*.45)*min(1,farm_fit['support']/4)
+            confidence=farm_fit['confidence']
             median=PP_MEDIANS.get((key,round(f['stars']*2)),pp)
             efficiency=max(.5,min(2,pp/max(1,median)))
             # Crowd top-score prevalence supplies farm evidence; short attempts reduce work.
@@ -109,10 +102,14 @@ def select(user,best,recent,prefs):
             # Gain leads the ranking. Bounded farm/effort bonuses cannot make
             # a tiny upgrade beat a substantial, physically supported target.
             crowd_bonus=1+.2*math.tanh(crowd/5)
-            rank=gain**1.5*crowd_bonus*efficiency**.35*confidence/(f['length']/60+.5)**.3
+            # Expected valuable completions per effort, with uncertainty and farm prevalence.
+            completion=farm_fit['fcProbability']
+            rank=gain*completion*crowd_bonus*efficiency**.5*(.5+.5*confidence)/(f['length']/60+.35)**.6
+
             farm.append(dict(row,accuracy=acc,estimatedPP=round(pp,1),estimatedGain=round(gain,2),
                 maxPP=round(estimate_pp(m,100),1),highAccuracyPP=round(estimate_pp(m,99),1),highAccuracyGain=round(r.weighted_gain(best,mid,estimate_pp(m,99)),2),
-                priority=rank,stage='Farm',focus='PP efficiency',provisional=False,
+                priority=rank,stage='Farm',focus='PP efficiency',provisional=farm_fit['provisional'],
+                fcProbability=farm_fit['fcProbability'],confidence=confidence,accuracyLow=farm_fit['accuracyLow'],accuracyHigh=farm_fit['accuracyHigh'],
                 farmEvidence=round(m['farm']['weight'],6),topScoreUse=m['farm']['topScoreUse'],
                 retrySeconds=round(f['length']),efficiency=round(efficiency,2),goal=f'Full combo at {acc:.1f}% accuracy.',
                 reason=f'This map appears repeatedly in community top scores after popularity and age adjustments. Its {round(f["length"])}-second attempts and {pp:.1f} estimated FC pp at {acc:.1f}% make it a pp-efficiency pick within your demonstrated range; an improved score is estimated to add {gain:.2f} weighted profile pp.'))
@@ -136,16 +133,16 @@ def select(user,best,recent,prefs):
         seen.add(row['id']);practice_rows.append(row)
         if len(practice_rows)>=60:break
     farm_rows=distinct(farm,60)
-    profiles=[{'mods':r.label(json.loads(key)),'ceiling':round(r.ceiling(refs,cap),2),'provisional':key in transfers,
-               'count':0 if key in transfers else len(refs),'minAR':floors[key],
+    profiles=[{'mods':r.label(json.loads(key)),'ceiling':round(min(cap,max((a['features']['stars'] for a in refs if model.success(a)),default=0)),2),'provisional':key in transfers,
+               'count':sum(model.success(a) for a in refs),'minAR':floors[key],
                'accuracy':round(statistics.median(a['score']['accuracy']*100 for a in refs),2)}
-              for key,refs in groups.items() if len(refs)>=2]
-    return {'algorithmVersion':7,'demo':False,'user':user['username'],'userId':user['id'],
-        'practiceSession':training.session(practice_rows,best,recent),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
+              for key,refs in groups.items() if any(model.success(a) for a in refs)]
+    return {'algorithmVersion':8,'performance':model.profile([a for refs in groups.values() for a in refs]),'matchedSample':sum(len(refs) for refs in groups.values()),'demo':False,'user':user['username'],'userId':user['id'],
+        'practiceSession':training.session(practice_rows,best,recent,diagnosis),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
         'mode':'practice','maxStars':cap,'comfortableCeiling':max((p['ceiling'] for p in profiles),default=cap),
         'profiles':profiles,'sample':len(samples),'cleanSample':sum(p['count'] for p in profiles),'bestCount':len(best),
         'minAR':min(floors.values(),default=9.5),'updated':time.time(),
         'warning':None if practice_rows else 'Not enough matching clean plays in the catalogue yet.',
-        'farmWarning':None if farm_rows else 'No supported farm targets currently fit your reading and difficulty limits.',
+        'farmWarning':None if farm_rows else 'No sufficiently supported pp upgrades were found. This can mean missing map coverage or too little comparable performance evidence, rather than a personal difficulty limit.',
         'catalogSize':len(MAPS),'selectionMs':round((time.perf_counter()-started)*1000,1),
-        'summary':'Farm uses community top-score prevalence, pp efficiency and short repeatable attempts, then matches your actual clean lazer plays. Practice keeps skill-building goals. Maps and pp curves are prepared in advance; pp figures are estimates and exclude bonus pp.'}
+        'summary':'Recent passes, complete failures and top scores are compared under the same mods, with newer results carrying more weight. Farm balances pp gain, estimated FC likelihood and retry time; Practice changes one demand at a time. PP forecasts describe an FC, while BPM describes map patterns and UR requires replay hit errors.'}

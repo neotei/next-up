@@ -17,7 +17,7 @@ FEATURE_WEIGHTS = {'stars': 2, 'aim': 1.5, 'speed': 1.5, 'ar': 1.2,
 
 
 def supported(score):
-    if score.get('legacy_score_id') or score.get('ruleset_id', 0) != 0:
+    if score.get('ruleset_id', 0) != 0:
         return False
     # No fail/reduced difficulty/autoplay scores cannot establish a farm skill level.
     allowed = {'HD', 'HR', 'DT', 'NC', 'CL', 'SD', 'PF', 'DA'}
