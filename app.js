@@ -19,10 +19,10 @@ async function post(path,body={}){if(window.NEXT_UP_BACKEND)return window.NEXT_U
 function render(){
  const maps=activeMaps(),warning=activeWarning(),list=maps.filter(m=>(filter==='all'||m.kind===filter)&&(modFilter==='all'||m.mods===modFilter)),first=list.find(m=>m.key===selected)||list[0];
  document.querySelectorAll('[data-section]').forEach(b=>{const active=b.dataset.section===section;b.classList.toggle('active',active);b.setAttribute('aria-pressed',active);});
- $('#section-description').textContent=section==='farm'?'Playable FC targets ranked by estimated pp gain.':'Readable maps that build on your clean plays.';
+ $('#section-description').textContent=section==='farm'?'Community farm picks ranked by pp for the effort.':'Readable maps that build on your clean plays.';
  $('#map-heading').textContent=section==='farm'?'Farm your next score':'Choose a practice map';
  $('#table-title').textContent=section==='farm'?'PP targets':'Practice maps';
- $('#method-details').textContent=section==='farm'?'Farm ranks estimated weighted profile pp gain, adjusted for similarity to clean passes. Estimates assume a full combo at the shown accuracy, replace your best existing pp on that beatmap and exclude bonus pp. Unranked adjustments and unfamiliar mod trials are excluded, and live osu! pp may differ from this calculator.':'Practice uses your clean passes and recent failures to keep reading comfortable while introducing at most one modest challenge. Trial setups have less direct evidence, and Difficulty Adjust changes only AR when shown. Mark unreadable maps as Too hard; aggregate attributes cannot diagnose individual patterns or technique.';
+ $('#method-details').textContent=section==='farm'?'Farm starts with osu!pps community top-score data and favours maps that are disproportionately common in top plays, give strong pp for their difficulty and allow short repeatable attempts. It then checks your reading and physical range. FC pp and weighted gain are estimates based on your latest top 100 scores, excluding bonus pp; live values may differ. The map catalogue is precomputed, so switching and recalculating do not download candidate maps.':'Practice uses your clean passes and recent failures to keep reading comfortable while introducing at most one modest challenge. Trial setups have less direct evidence, and Difficulty Adjust changes only AR when shown. Mark unreadable maps as Too hard; aggregate attributes cannot diagnose individual patterns or technique.';
  $('#total-count').textContent=maps.length;
  const setups=[...new Set(maps.map(m=>m.mods))];
  $('#mod-tabs').innerHTML=['all',...setups].map(m=>`<button data-mod="${esc(m)}" class="${modFilter===m?'active':''}" aria-pressed="${modFilter===m}">${m==='all'?'Any mods':esc(m.startsWith('NM + DA')?'Normal speed':m)}</button>`).join('');
@@ -60,14 +60,15 @@ $('#account').addEventListener('click',settings);$('#connect-banner').addEventLi
 $('#settings-form').addEventListener('submit',e=>{e.preventDefault();location.assign('/auth/login?user_id='+encodeURIComponent($('#username').value.trim()));});
 $('#reset-feedback').addEventListener('click',async()=>{try{await post('/api/reset-feedback');$('#settings').close();await post('/api/refresh');await state();}catch(e){toast(e.message);}});
 $('#disconnect').addEventListener('click',async()=>{try{await post('/api/disconnect');$('#settings').close();result=null;selected=null;filter='all';modFilter='all';revision=null;render();await state();toast('Signed out; your session has been removed.');}catch(e){$('#settings-error').textContent=e.message;}});
-$('#refresh').addEventListener('click',async()=>{if(!configured)return settings();try{await post('/api/refresh');await state();}catch(e){toast(e.message);}});
+$('#refresh').addEventListener('click',async()=>{if(!configured)return settings();try{await post('/api/refresh');await state();if(!busy)toast('Both lists are updated.');}catch(e){toast(e.message);}});
 $('#limit-form').addEventListener('submit',async e=>{e.preventDefault();try{await post('/api/preferences',{max_stars:Number($('#star-limit').value)});await state();await post('/api/refresh');await state();}catch(err){toast(err.message);}});
 document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter;selected=null;render();}));
 $('#mod-tabs').addEventListener('click',e=>{const button=e.target.closest('[data-mod]');if(button){modFilter=button.dataset.mod;selected=null;render();}});
 $('#rows').addEventListener('click',e=>{let select=e.target.closest('[data-select]'),detail=e.target.closest('[data-detail]');if(select){selected=select.dataset.select;render();}else if(detail){let key=detail.dataset.detail;expanded.has(key)?expanded.delete(key):expanded.add(key);render();}});
 $('#details-button').addEventListener('click',()=>{let d=$('#method-details');d.hidden=!d.hidden;$('#details-button').setAttribute('aria-expanded',!d.hidden);$('#details-button').lastElementChild.textContent=d.hidden?'+':'−';});
 $('#section-switch').addEventListener('click',e=>{const button=e.target.closest('[data-section]');if(!button)return;section=button.dataset.section;localStorage.setItem('next-up-section',section);selected=null;filter='all';modFilter='all';render();});
-render();state();setInterval(state,2500);
+async function poll(){await state();setTimeout(poll,busy?350:15000);}
+render();poll();
 const authError=new URLSearchParams(location.search).get('auth_error');
 if(authError){const messages={mismatch:'The signed-in account does not match that user ID; try again with your own ID.',denied:'osu! authorization was cancelled.',state:'The sign-in request expired; please try again.',id:'Enter a numeric osu! user ID.',unavailable:'Sign-in is being set up. Please check back shortly.',busy:'The service is busy; please try again later.',failed:'osu! sign-in could not be completed; please try again.'};toast(messages[authError]||messages.failed,true);}
 if(location.search)history.replaceState(null,'',location.pathname);

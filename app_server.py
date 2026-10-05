@@ -13,6 +13,7 @@ import urllib.request
 from flask import Flask, jsonify, redirect, request, session, send_from_directory
 import rosu_pp_py as rosu
 import recommender
+import fast_recommender
 
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / '.cache'
@@ -93,40 +94,40 @@ def current():
 
 def build(state):
     try:
-        with CALCULATOR:
-            if state.get('cancelled'): return
-            state['status']['message'] = 'Reading your lazer scores…'
-            user = api('me/osu', state)
-            best = []
-            for offset in range(0, 1000, 100):
-                if state.get('cancelled'): return
-                page = api(f'users/{user["id"]}/scores/best?mode=osu&legacy_only=0&limit=100&offset={offset}', state)
-                best.extend(page)
-                if len(page)<100: break
-            recent = api(f'users/{user["id"]}/scores/recent?mode=osu&legacy_only=0&include_fails=1&limit=100', state)
-            prefs = copy.deepcopy(state['prefs'])
-            searches = {}
-            parsed_maps = {}
-            def private_api(path, _config):
-                if state.get('cancelled'): raise ValueError('Calculation cancelled.')
-                if path not in searches: searches[path] = api(path, state)
-                return searches[path]
-            def private_map(map_id):
-                if state.get('cancelled'): raise ValueError('Calculation cancelled.')
-                if map_id not in parsed_maps: parsed_maps[map_id] = map_file(map_id)
-                return parsed_maps[map_id]
-            # Publish a smaller, fully checked list before widening the search.
-            for reference_limit, poor_limit, discovery_limit in ((12,4,4),(24,8,8)):
-                if state.get('cancelled'): return
-                prefs.update(reference_limit=reference_limit, poor_limit=poor_limit,
-                             discovery_limit=discovery_limit)
-                result = recommender.build(user, best, recent, prefs, private_api, private_map,
-                                           state['status'], recommender.weighted_gain)
-                result['updated'] = time.time()
-                with LOCK:
-                    if not state.get('cancelled'):
-                        state['result'] = result
-                        state['revision'] += 1
+        if state.get('cancelled'): return
+        user=state['user']
+        snapshot=state.get('scores')
+        if not snapshot or time.time()-snapshot['fetched']>=60:
+            state['status']['message']='Syncing your latest lazer scores…'
+            best=api(f'users/{user["id"]}/scores/best?mode=osu&legacy_only=0&limit=100&offset=0',state)
+            recent=api(f'users/{user["id"]}/scores/recent?mode=osu&legacy_only=0&include_fails=1&limit=100',state)
+            snapshot={'best':best,'recent':recent,'fetched':time.time()}
+        if state.get('cancelled'):return
+        known=[];missing=[]
+        for score in snapshot['best']:
+            if not recommender.supported(score) or not score.get('beatmap'):continue
+            key=(score['beatmap']['id'],recommender.signature(fast_recommender.canonical(score.get('mods',[]))))
+            item=fast_recommender.INDEX.get(key)
+            feature=item['features'] if item else fast_recommender.REFERENCE_FEATURES.get(key)
+            if feature and recommender.anchor(score,feature,state['prefs']['max_stars']):known.append(key)
+            elif not feature and score.get('passed') and score.get('accuracy',0)>=.945 and recommender.miss_count(score)<=1:missing.append((key,score))
+        if len(known)<3:
+            # Unusual profiles need a small one-time reference calibration, never
+            # one download per suggested map. Public features are reusable across users.
+            for key,score in missing[:3]:
+                if state.get('cancelled'):return
+                state['status']['message']='Calibrating an uncatalogued clean play…'
+                try:
+                    feature=recommender.features(map_file(key[0]),score['beatmap'],score.get('mods',[]))
+                    feature.pop('_difficulty',None)
+                    fast_recommender.REFERENCE_FEATURES[key]=feature
+                except (ValueError,OSError,RuntimeError):continue
+        result=fast_recommender.select(user,snapshot['best'],snapshot['recent'],copy.deepcopy(state['prefs']))
+        with LOCK:
+            if not state.get('cancelled'):
+                state['scores']=snapshot
+                state['result']=result
+                state['revision']+=1
     except Exception as error:
         state['status']['error'] = str(error) if isinstance(error, ValueError) else 'The list could not be calculated; please try again.'
     finally:
@@ -136,6 +137,12 @@ def build(state):
 def start_build(state):
     with LOCK:
         if state['status']['busy']: return
+        snapshot=state.get('scores')
+        if snapshot and time.time()-snapshot['fetched']<60:
+            state['result']=fast_recommender.select(state['user'],snapshot['best'],snapshot['recent'],state['prefs'])
+            state['revision']+=1
+            state['status']={'busy':False,'message':'','error':None}
+            return
         if time.time()-state['last_build']<60:
             raise ValueError('Wait a minute before calculating again.')
         state['last_build'] = time.time()
