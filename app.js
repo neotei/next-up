@@ -17,13 +17,20 @@ const activeWarning=()=>section==='farm'?result?.farmWarning:result?.warning;
 let result=null,configured=false,busy=false,filter='all',modFilter='all',selected=null,expanded=new Set(),revision=null,timer;
 function toast(message,sticky=false){clearTimeout(timer);$('#toast').textContent=message;$('#toast').hidden=false;if(!sticky)timer=setTimeout(()=>$('#toast').hidden=true,5500);}
 async function post(path,body={}){if(window.NEXT_UP_BACKEND)return window.NEXT_UP_BACKEND.post(path,body);let response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let data=await response.json();if(!response.ok)throw new Error(data.error||'Request failed.');return data;}
+function renderTraining(){
+ const el=$('#training-session'),plan=result?.practiceSession;
+ el.hidden=section!=='practice'||!plan;if(el.hidden)return;
+ if(el.dataset.session===JSON.stringify(plan))return;el.dataset.session=JSON.stringify(plan);
+ el.innerHTML=`<div class="training-heading"><h2>${esc(plan.focus)}</h2><span>~${plan.minutes} minutes of play</span></div><p class="training-evidence">${esc(plan.evidence)}</p><div class="training-blocks">${['warm','focus','check'].map((role,i)=>{const items=plan.items.filter(x=>x.role===role);if(!items.length)return '';return `<div class="training-block"><h3><b>0${i+1}</b> ${esc(items[0].title)}</h3><p>${esc(items[0].instruction)}</p>${items.map(item=>{const m=result.maps.find(m=>m.key===item.key);if(!m)return '';return `<button data-training="${esc(m.key)}"><span>${esc(m.title)}</span><small>${esc(m.version)} · ${m.stars.toFixed(2)}★ · ${esc(modName(m))}</small></button>${item.attempts.length?`<div class="training-attempts">Recent: ${item.attempts.map(a=>a.passed?`${a.accuracy.toFixed(1)}% / ${a.misses} misses`:'Failed').join(' · ')}</div>`:''}`;}).join('')}</div>`;}).join('')}</div><details class="training-review"><summary>How to judge the session</summary><p>${esc(plan.review)}</p><p>These are starting goals, not a diagnosis of individual patterns. Lazer score summaries do not provide hit-error timing or replay-level technique analysis.</p></details>`;
+}
 function render(selectionOnly=false){
  const maps=activeMaps(),warning=activeWarning(),list=maps.filter(m=>(filter==='all'||m.kind===filter)&&(modFilter==='all'||m.mods===modFilter)),first=list.find(m=>m.key===selected)||list[0];
  document.querySelectorAll('[data-section]').forEach(b=>{const active=b.dataset.section===section;b.classList.toggle('active',active);b.setAttribute('aria-pressed',active);});
  $('#section-description').textContent=section==='farm'?'Community farm picks ranked by pp for the effort.':'Readable maps that build on your clean plays.';
- $('#map-heading').textContent=section==='farm'?'Farm your next score':'Choose a practice map';
- $('#table-title').textContent=section==='farm'?'PP targets':'Practice maps';
+ $('#map-heading').textContent=section==='farm'?'Farm your next score':'Your practice session';
+ $('#table-title').textContent=section==='farm'?'PP targets':'More practice maps';
  $('#method-details').textContent=section==='farm'?'Farm starts with osu!pps community top-score data and favours maps that are disproportionately common in top plays, give strong pp for their difficulty and allow short repeatable attempts. It then checks your reading and physical range. FC pp and weighted gain are estimates based on your latest top 100 scores, excluding bonus pp; live values may differ. The map catalogue is precomputed, so switching and recalculating do not download candidate maps.':'Practice uses your clean passes and recent failures to keep reading comfortable while introducing at most one modest challenge. Trial setups have less direct evidence, and Difficulty Adjust changes only AR when shown. Mark unreadable maps as Too hard; aggregate attributes cannot diagnose individual patterns or technique.';
+ renderTraining();
  $('#total-count').textContent=maps.length;
  const setups=[...new Set(maps.map(m=>m.mods))];
  $('#mod-tabs').innerHTML=['all',...setups].map(m=>`<button data-mod="${esc(m)}" class="${modFilter===m?'active':''}" aria-pressed="${modFilter===m}">${m==='all'?'Any mods':esc(m.startsWith('NM + DA')?'Normal speed':m)}</button>`).join('');
@@ -73,3 +80,5 @@ render();poll();
 const authError=new URLSearchParams(location.search).get('auth_error');
 if(authError){const messages={mismatch:'The signed-in account does not match that user ID; try again with your own ID.',denied:'osu! authorization was cancelled.',state:'The sign-in request expired; please try again.',id:'Enter a numeric osu! user ID.',unavailable:'Sign-in is being set up. Please check back shortly.',busy:'The service is busy; please try again later.',failed:'osu! sign-in could not be completed; please try again.'};toast(messages[authError]||messages.failed,true);}
 if(location.search)history.replaceState(null,'',location.pathname);
+
+$('#training-session').addEventListener('click',e=>{const b=e.target.closest('[data-training]');if(!b)return;selected=b.dataset.training;filter='all';modFilter='all';render();$('#featured').scrollIntoView({block:'nearest',behavior:'instant'});});

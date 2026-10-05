@@ -7,6 +7,7 @@ from pathlib import Path
 import statistics
 import time
 import recommender as r
+import training
 
 CATALOG=json.loads((Path(__file__).parent/'catalog.json').read_text())
 MAPS=CATALOG['maps']
@@ -140,7 +141,7 @@ def select(user,best,recent,prefs):
                'accuracy':round(statistics.median(a['score']['accuracy']*100 for a in refs),2)}
               for key,refs in groups.items() if len(refs)>=2]
     return {'algorithmVersion':7,'demo':False,'user':user['username'],'userId':user['id'],
-        'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
+        'practiceSession':training.session(practice_rows,best,recent),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
         'mode':'practice','maxStars':cap,'comfortableCeiling':max((p['ceiling'] for p in profiles),default=cap),
         'profiles':profiles,'sample':len(samples),'cleanSample':sum(p['count'] for p in profiles),'bestCount':len(best),
         'minAR':min(floors.values(),default=9.5),'updated':time.time(),
