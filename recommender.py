@@ -250,7 +250,12 @@ def build(user, best, recent, config, api, map_file, status, gain_fn):
                 and s['beatmap'].get('ranked') in (1,2)]
     # Start with strong reliable passes, rather than letting easy SS scores consume
     # the small reference budget before the player's actual range is represented.
-    possible.sort(key=lambda s:(miss_count(s)<=1,s['accuracy']>=.945,s.get('pp') or 0,s['accuracy']),reverse=True)
+    def reference_order(score):
+        estimate=score['beatmap'].get('difficulty_rating',0)
+        if any(m['acronym'] in ('DT','NC') for m in score.get('mods',[])):estimate*=1.4
+        if any(m['acronym']=='HR' for m in score.get('mods',[])):estimate*=1.08
+        return (miss_count(score)<=1,score['accuracy']>=.945,-max(0,estimate-cap),score.get('pp') or 0,score['accuracy'])
+    possible.sort(key=reference_order,reverse=True)
     chosen, seen = [], set()
     reference_limit=int(config.get('reference_limit',100))
     buckets=collections.defaultdict(list)
