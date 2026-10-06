@@ -27,3 +27,9 @@ with patch.object(server,'api',side_effect=AssertionError('Warm selection called
     server.start_build(state)
 assert not state['status']['busy']
 print('PASS: bounded pagination, initial list before enrichment, private history merge, coverage reporting and network-free warm selection.')
+
+# Completed map scores remain reviewable even after the map leaves the current shortlist.
+blocked=fast.select(state['user'],best,recent,{'max_stars':12,'blocked_ids':[item['id']]})
+key=str(item['id'])+'|[]'
+assert key in blocked['practiceAttempts'] and all(m['id']!=item['id'] for m in blocked['maps'])
+print('PASS: session review retains submitted score evidence independently of recommendation membership.')

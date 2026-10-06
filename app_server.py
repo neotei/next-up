@@ -308,6 +308,11 @@ def change(action):
                 prefs['mod_caps'][row['modKey']]=min(prefs['mod_caps'].get(row['modKey'],12),limit)
                 for list_key in ('maps','farmMaps'):
                     state['result'][list_key]=[m for m in state['result'].get(list_key,[]) if m['id'] not in prefs['blocked_ids'] and m['stars']<=prefs['mod_caps'].get(m['modKey'],12)]
+                snapshot=state.get('scores')
+                if snapshot:
+                    state['result']=fast_recommender.select(state['user'],snapshot['best'],snapshot['recent'],prefs)
+                else:
+                    state['result']['practiceSession']=fast_recommender.training.session(state['result'].get('maps',[]),[],[])
                 state['revision']+=1
                 return jsonify(ok=True,limit=prefs['mod_caps'][row['modKey']],preferences=prefs)
             elif action == 'reset-feedback':

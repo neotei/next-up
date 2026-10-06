@@ -20,7 +20,7 @@ Candidates qualify through community prevalence or a current 99% FC pp value at 
 
 ## Practice
 
-Training leads compare outcomes across maps of similar total difficulty while holding other demands broadly stable. A focus requires at least five comparisons spanning three maps. This establishes an association worth practising, not the cause of a particular miss. Where evidence is insufficient, the plan uses balanced control rather than guessing a weakness. Sessions include warm-up, two full attempts on focused maps, and a transfer check on a separate map.
+Training leads compare outcomes across maps of similar total difficulty while holding other demands broadly stable. A focus requires at least five comparisons spanning three maps. This establishes an association worth practising, not the cause of a particular miss. Where evidence is insufficient, the plan uses balanced control rather than guessing a weakness. The interface presents one map at a time: a warm-up, two focused maps played twice each, and a transfer check. Warm-up and training use the same mod setup so preparation does not switch reading conditions. Session progress is saved in the browser per account, and skipped maps remain distinct from marked-played maps. Marking a map played only tracks navigation; the final review reports new submitted score IDs and timestamps, without claiming that manual completion proves improvement.
 
 ## What speed and UR mean
 

@@ -152,3 +152,8 @@ def diagnose(groups):
     finding=max(findings,key=lambda a:a['loss'])
     finding['evidence']=f'Across {finding["maps"]} maps and {finding["comparisons"]} comparable observations, outcomes were weaker when the {finding["axis"]} requirement changed. This is a training lead to check across complete runs, rather than proof of the cause of individual misses.'
     return finding
+
+
+def score_time(score):
+    try:return datetime.datetime.fromisoformat((score.get('ended_at') or score.get('created_at')).replace('Z','+00:00')).timestamp()
+    except (ValueError,TypeError,AttributeError):return 0

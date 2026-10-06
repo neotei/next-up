@@ -1,5 +1,4 @@
-"""Evidence-bounded training sessions assembled from already checked maps."""
-import statistics
+"""A compact, stable-mod practice route with explicit play instructions."""
 import recommender as r
 
 def mod_key(mods):
@@ -14,42 +13,28 @@ def mod_key(mods):
 
 def session(maps,best,recent,diagnosis=None):
     if not maps:return None
-    established=[m for m in maps if not m['provisional']]
-    pool=established or maps
-    scores={}
-    for s in best+recent:
-        if s.get('beatmap'):
-            scores.setdefault(s['beatmap']['id'],[]).append(s)
-    clean=[s for s in best if s.get('passed') and s.get('accuracy',0)>=.945 and r.miss_count(s)<=1]
-    median=statistics.median(s['accuracy']*100 for s in clean) if clean else None
-    focus='Accuracy control' if median is not None and median<98 else 'Consistency'
-    if diagnosis:
-        focus=diagnosis['focus'];explanation=diagnosis['evidence']
-    else:
-        explanation='Compare complete runs on varied readable maps before raising the challenge.'
-    instruction='Complete each map twice without restarting after a miss, then compare accuracy and misses. Keep the other demands stable while checking the focus named above.'
-    used=set()
-    def take(values,n):
-        out=[]
-        for m in values:
-            if m['id'] not in used:out.append(m);used.add(m['id'])
-            if len(out)>=n:break
-        return out
-    warm=take(sorted(pool,key=lambda m:(m['stage']=='Stretch',m['stars'],m['length'])),2)
-    if focus=='Accuracy control':
-        ordered=sorted(pool,key=lambda m:(m['stage']=='Stretch',-m['support'],abs(m['length']-100)))
-    else:ordered=sorted(pool,key=lambda m:(m['focus']!=focus,m['stage']=='Trial',-m['priority']))
-    drill=take(ordered,3)
-    check=take(sorted(pool,key=lambda m:(m['id'] not in scores,m['stage']=='Stretch',m['id'])),1)
-    blocks=[('warm','Warm up','Play each once; use a relaxed grip and finish the run.',warm),
-            ('focus',focus,instruction,drill),
-            ('check','Check transfer','Play once without a retry and compare with the focused block. Return to this map next session under the same mods.',check)]
+    pool=[m for m in maps if not m['provisional']] or maps
+    focus=(diagnosis or {}).get('focus','Balanced control')
+    ordered=sorted(pool,key=lambda m:(m['focus']!=focus,m['stage']=='Trial',-m['priority']))
+    lead=ordered[0]
+    # A warm-up should prepare the session's setup, not switch to unfamiliar reading.
+    same=[m for m in pool if m['modKey']==lead['modKey']]
+    warm=sorted(same,key=lambda m:(m['stars']>lead['stars'],abs(m['ar']-lead['ar'])>.35,-m['accuracy'],m['stars']))[0]
+    used={warm['id']}
+    drills=[]
+    for m in ordered:
+        if m['id'] in used or m['modKey']!=lead['modKey']:continue
+        drills.append(m);used.add(m['id'])
+        if len(drills)==2:break
+    check=next((m for m in sorted(same,key=lambda m:(m['stage']=='Stretch',abs(m['stars']-lead['stars']),-m['support'])) if m['id'] not in used),None)
+    route=[('warm','Warm up',1,'Finish one relaxed run before moving to the focused maps.',warm)]
+    route += [('focus',f'Train {i+1}',2,'Play twice without restarting, then compare your accuracy and misses.',m) for i,m in enumerate(drills)]
+    if check:route.append(('check','Check progress',1,'Play once without a retry to see whether the same control carries over.',check))
     items=[]
-    for role,title,instruction,rows in blocks:
-        for m in rows:
-            matching=[s for s in recent if s.get('beatmap',{}).get('id')==m['id'] and mod_key(s.get('mods',[]))==m['modKey']]
-            attempts=[{'accuracy':round(s.get('accuracy',0)*100,2),'misses':r.miss_count(s),'passed':bool(s.get('passed'))} for s in matching[:3]]
-            items.append({'key':m['key'],'role':role,'title':title,'instruction':instruction,'attempts':attempts})
-    minutes=round(sum(m['length']*(2 if role=='focus' else 1) for role,_,_,rows in blocks for m in rows)/60)
-    return {'focus':focus,'evidence':explanation,'minutes':minutes,'items':items,
-            'review':'Refresh after playing to see your latest attempts. Keep the same mods when comparing runs; look for fewer misses with steady accuracy across several complete plays, then try a different map. Move on after two focused attempts, and lower the challenge if you lose the patterns.'}
+    for role,title,plays,instruction,m in route:
+        matching=[s for s in recent if s.get('beatmap',{}).get('id')==m['id'] and mod_key(s.get('mods',[]))==m['modKey']]
+        attempts=[{'id':s.get('id'),'accuracy':round(s.get('accuracy',0)*100,2),'misses':r.miss_count(s),'passed':bool(s.get('passed'))} for s in matching[:3]]
+        items.append({'key':m['key'],'role':role,'title':title,'plays':plays,'instruction':instruction,'attempts':attempts})
+    return {'version':2,'focus':focus,'displayFocus':{'Tapping demand':'Tapping control','Long-run consistency':'Staying consistent','Balanced control':'Build control','Reading range':'Reading patterns','Dense patterns':'Busy patterns'}.get(focus,focus),'evidence':(diagnosis or {}).get('evidence','More comparable results are needed before choosing a specific weakness.'),
+            'minutes':max(1,round(sum(m['length']*plays for _,_,plays,_,m in route)/60)),'items':items,
+            'review':'Refresh your scores after the session to compare complete runs under the same mods. Fewer misses with steady accuracy across different maps is a useful sign of progress.'}

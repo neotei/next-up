@@ -140,7 +140,7 @@ def select(user,best,recent,prefs):
                'accuracy':round(statistics.median(a['score']['accuracy']*100 for a in refs),2)}
               for key,refs in groups.items() if any(model.success(a) for a in refs)]
     return {'algorithmVersion':8,'performance':model.profile([a for refs in groups.values() for a in refs]),'matchedSample':sum(len(refs) for refs in groups.values()),'demo':False,'user':user['username'],'userId':user['id'],
-        'practiceSession':training.session(practice_rows,best,recent,diagnosis),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
+        'practiceAttempts':{str(mid)+'|'+key:[{'id':s.get('id'),'time':model.score_time(s),'accuracy':round(s.get('accuracy',0)*100,2),'misses':r.miss_count(s),'passed':bool(s.get('passed'))} for s in values[:5]] for (mid,key),values in attempts.items()},'practiceSession':training.session(practice_rows,best,recent,diagnosis),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
         'mode':'practice','maxStars':cap,'comfortableCeiling':max((p['ceiling'] for p in profiles),default=cap),
         'profiles':profiles,'sample':len(samples),'cleanSample':sum(p['count'] for p in profiles),'bestCount':len(best),
         'minAR':min(floors.values(),default=9.5),'updated':time.time(),
