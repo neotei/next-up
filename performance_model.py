@@ -76,7 +76,8 @@ def style(f):
     if f.get('burstBpm',0)>0:return 'Bursts / hybrid'
     return 'Mixed'
 
-def assess(candidate,records,cap,attempts,min_ar=None,farming=False):
+def assess(candidate,records,cap,attempts,min_ar=None,farming=False,stretch=False):
+    stretch=bool(stretch and farming)
     f=candidate['features'];proven=[a for a in records if near_fc(a)] if farming else [a for a in records if success(a)]
     if not proven or f['stars']>cap or f['length']<(20 if farming else 35):return None
     # Match a demonstrated demand envelope under this mod setup, rather than total stars alone.
@@ -84,8 +85,8 @@ def assess(candidate,records,cap,attempts,min_ar=None,farming=False):
     for a in proven:
         n=a['features']
         increases={k:f[k]/max(.1,n[k]) for k in ('aim','speed','density','length')}
-        if f['stars']>n['stars']+(.25 if farming else .4):continue
-        if any(increases[k]>(1.12 if farming else 1.18) for k in ('aim','speed','density')):continue
+        if f['stars']>n['stars']+(.5 if stretch else .25 if farming else .4):continue
+        if any(increases[k]>(1.20 if stretch else 1.12 if farming else 1.18) for k in ('aim','speed','density')):continue
         if increases['length']>(1.35 if farming else 1.6):continue
         if sum(increases[k]>1.08 for k in ('aim','speed','density'))>1:continue
         # A song's BPM is not a tapping ceiling. Match actual bursts and sustained runs separately.
@@ -127,6 +128,10 @@ def assess(candidate,records,cap,attempts,min_ar=None,farming=False):
     if abs(f['ar']-n['ar'])>.35:elevated.append('ar')
     if len(elevated)>1 and not farming:return None
     acc-=max(0,f['stars']-n['stars'])*1.5
+    if stretch:
+        excess=max(0,max(f[k]/max(.1,n[k]) for k in ('aim','speed','density'))-1.08)
+        acc-=excess*8
+        fc*=math.exp(-excess*5-max(0,f['stars']-n['stars']-.25)*2)
     direct=[s for s in sorted(attempts,key=score_time,reverse=True) if complete(s,f)][:6]
     if direct:
         direct_acc=[s.get('accuracy',0)*100 for s in direct if s.get('passed')] if farming else [s.get('accuracy',0)*100 for s in direct]

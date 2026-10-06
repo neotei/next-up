@@ -47,3 +47,9 @@ UR is ten times the standard deviation of hit errors. Aggregate accuracy, misses
 - [Player-authored consistency guide](https://osu.ppy.sh/community/forums/topics/1542959)
 
 Player guides offer practical hypotheses rather than controlled evidence of an optimal training algorithm. This model is an explainable starting point that should be checked against future scores, not a promise of a perfect map.
+
+## Farm browsing and attempt cost
+
+Efficient ranks `weighted_gain * fc_likelihood / ((map_seconds + 12) / 60)`, adjusted by bounded crowd evidence, catalogue PP efficiency and confidence. Each attempt is charged the full map duration plus restart overhead; early-failure timing is not observed. This rate is a heuristic, not a calibrated prediction of actual earnings per minute. Higher PP ranks `weighted_gain * sqrt(fc_likelihood) / sqrt(attempt_minutes)` with the same evidence adjustments, explicitly trading completion reliability for larger gains. Neither mode sorts by SS PP alone.
+
+Higher PP may extend a demonstrated near-FC envelope by at most 0.5 stars and 20% on aim, speed or density, with only one of these axes rising over 8%. Reading, sustained-stream length and burst/stream tempo gates remain identical to Efficient. Additional demand reduces forecast accuracy and FC likelihood; direct failed attempts still reject a candidate. The service retains up to 180 distinct maps from each ranking and merges the pools. The browser filters and pages this pool in batches of 30 without requesting new calculations. Catalogue coverage can limit the number of genuinely supported targets.

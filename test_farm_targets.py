@@ -58,3 +58,17 @@ assert len(selected)==24 and selected[0][0][0]==9000000
 assert sum(k[0]>=9000000 for k,s in selected)==16
 assert any(not s.get('passed') for k,s in selected)
 print('PASS: top achievement, recent passes and recent failures receive bounded reference coverage.')
+# Efficient ranking charges real duration, and a higher target needs a bounded
+# mechanical stretch without borrowing unsupported reading or streaming ability.
+short=f.farm_effort(10,.4,45,.7,1.2,.001)
+long=f.farm_effort(10,.4,180,.7,1.2,.001)
+assert short[0]>long[0]*3 and short[1]>long[1]*3
+base=model.assess({'features':features},records,12,[],farming=True)
+challenger=dict(features,stars=features['stars']+.4,aim=features['aim']*1.16)
+assert model.assess({'features':challenger},records,12,[],farming=True) is None
+stretch=model.assess({'features':challenger},records,12,[],farming=True,stretch=True)
+assert stretch and stretch['accuracy']<base['accuracy'] and stretch['fcProbability']<base['fcProbability']
+for changes in ({'aim':features['aim']*1.3},{'ar':7},{'streamBpm':180,'streamNotes':32},{'burstBpm':260}):
+    assert model.assess({'features':dict(features,**changes)},records,12,[],farming=True,stretch=True) is None
+assert model.assess({'features':challenger},records,12,fails,farming=True,stretch=True) is None
+print('PASS: effort ranking favors shorter comparable attempts; stretch stays bounded and preserves reading, stream and failure limits.')

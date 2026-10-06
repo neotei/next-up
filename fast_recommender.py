@@ -36,6 +36,14 @@ def estimate_pp(m,accuracy):
         if lo<=accuracy<=hi:return p+(q-p)*(accuracy-lo)/(hi-lo)
     return points[0][1] if accuracy<points[0][0] else points[-1][1]
 
+def farm_effort(gain,completion,length,confidence,efficiency,crowd_weight):
+    # Charge a full run plus restart overhead per attempt, rather than assuming
+    # that the player immediately abandons every unsuccessful run.
+    minutes=(length+12)/60
+    rate=gain*completion/minutes
+    evidence=(.5+.5*confidence)*(1+.2*math.tanh(math.log1p(crowd_weight*10000)/5))
+    return rate*evidence*max(.5,min(2,efficiency))**.5,rate,minutes
+
 def select(user,best,recent,prefs):
     started=time.perf_counter()
     best_ids={s.get('id') for s in best}
@@ -76,6 +84,10 @@ def select(user,best,recent,prefs):
         intrinsic_efficiency=m['curve'].get('99',0)/max(1,band_median)
         farm_fit=(model.assess(c,refs,group_cap,history,floors[key],farming=True)
                   if key not in transfers and m['curve'] and (m['farm']['weight']>0 or intrinsic_efficiency>=1.1) else None)
+        stretch=False
+        if not farm_fit and key not in transfers and m['curve'] and (m['farm']['weight']>0 or intrinsic_efficiency>=1.1):
+            farm_fit=model.assess(c,refs,group_cap,history,floors[key],farming=True,stretch=True)
+            stretch=bool(farm_fit)
         if not fit and not farm_fit:continue
         matched=fit or farm_fit
         ref=matched['neighbor'];ns=ref['score'];nf=ref['features'];nb=ns['beatmap'];nbs=ns.get('beatmapset',{})
@@ -110,13 +122,14 @@ def select(user,best,recent,prefs):
             crowd_bonus=1+.2*math.tanh(crowd/5)
             # Expected valuable completions per effort, with uncertainty and farm prevalence.
             completion=farm_fit['fcProbability']
-            rank=gain*completion*crowd_bonus*efficiency**.5*(.5+.5*confidence)/(f['length']/60+.35)**.6
+            rank,rate,minutes=farm_effort(gain,completion,f['length'],confidence,efficiency,m['farm']['weight'])
 
             farm.append(dict(row,accuracy=acc,estimatedPP=round(pp,1),estimatedGain=round(gain,2),
                 maxPP=round(estimate_pp(m,100),1),highAccuracyPP=round(estimate_pp(m,99),1),highAccuracyGain=round(r.weighted_gain(best,mid,estimate_pp(m,99)),2),
-                priority=rank,stage='Farm',focus='PP efficiency',provisional=farm_fit['provisional'],
+                priority=rank,higherPriority=gain*math.sqrt(completion)*(.5+.5*confidence)*crowd_bonus*efficiency**.5/math.sqrt(minutes),
+                stretch=stretch,gainPerMinute=round(rate,3),attemptMinutes=round(minutes,2),stage='Farm',focus='PP efficiency',provisional=farm_fit['provisional'],
                 fcProbability=farm_fit['fcProbability'],confidence=confidence,accuracyLow=farm_fit['accuracyLow'],accuracyHigh=farm_fit['accuracyHigh'],
-                farmEvidence=round(m['farm']['weight'],6),topScoreUse=m['farm']['topScoreUse'],
+                farmEvidence=m['farm']['weight'],topScoreUse=m['farm']['topScoreUse'],
                 retrySeconds=round(f['length']),efficiency=round(efficiency,2),goal=f'Full combo at {acc:.1f}% accuracy.',
                 reason=('This map appears repeatedly in community top scores after popularity and age adjustments. ' if m['farm']['weight']>0 else f'Its 99% FC pp is {intrinsic_efficiency:.2f} times the median for this mod and star band in the catalogue. ')+f'Its {round(f["length"])}-second attempts and {pp:.1f} estimated FC pp at {acc:.1f}% make it a pp-efficiency pick within your demonstrated range; an improved score is estimated to add {gain:.2f} weighted profile pp, against your {targets["minScorePP"]:.0f} pp target floor.'))
     def distinct(rows,limit):
@@ -138,12 +151,19 @@ def select(user,best,recent,prefs):
         if row['id'] in seen:continue
         seen.add(row['id']);practice_rows.append(row)
         if len(practice_rows)>=60:break
-    farm_rows=distinct(farm,60)
+    # Retain both rankings so larger gains do not get lost behind efficient picks.
+    efficient=distinct([row for row in farm if not row['stretch']],180)
+    higher=distinct([dict(row,priority=row['higherPriority']) for row in farm],180)
+    by_key={row['key']:row for row in farm}
+    chosen={row['id']:row for row in efficient}
+    for row in higher:
+        if row['id'] not in chosen:chosen[row['id']]=by_key[row['key']]
+    farm_rows=sorted(chosen.values(),key=lambda row:row['priority'],reverse=True)
     profiles=[{'mods':r.label(json.loads(key)),'ceiling':round(min(cap,max((a['features']['stars'] for a in refs if model.success(a)),default=0)),2),'provisional':key in transfers,
                'count':sum(model.success(a) for a in refs),'minAR':floors[key],
                'accuracy':round(statistics.median(a['score']['accuracy']*100 for a in refs),2)}
               for key,refs in groups.items() if any(model.success(a) for a in refs)]
-    return {'algorithmVersion':9,'farmTargets':targets,'featureCoverage':{'matchedBest':sum((s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in INDEX or (s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in REFERENCE_FEATURES for s in best if r.supported(s)), 'supportedBest':sum(r.supported(s) for s in best)},'performance':model.profile([a for refs in groups.values() for a in refs]),'matchedSample':sum(len(refs) for refs in groups.values()),'demo':False,'user':user['username'],'userId':user['id'],
+    return {'algorithmVersion':10,'farmTargets':targets,'featureCoverage':{'matchedBest':sum((s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in INDEX or (s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in REFERENCE_FEATURES for s in best if r.supported(s)), 'supportedBest':sum(r.supported(s) for s in best)},'performance':model.profile([a for refs in groups.values() for a in refs]),'matchedSample':sum(len(refs) for refs in groups.values()),'demo':False,'user':user['username'],'userId':user['id'],
         'practiceAttempts':{str(mid)+'|'+key:[{'id':s.get('id'),'time':model.score_time(s),'accuracy':round(s.get('accuracy',0)*100,2),'misses':r.miss_count(s),'passed':bool(s.get('passed'))} for s in values[:5]] for (mid,key),values in attempts.items()},'practiceSession':training.session(practice_rows,best,recent,diagnosis),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
         'mode':'practice','maxStars':cap,'comfortableCeiling':max((p['ceiling'] for p in profiles),default=cap),
         'profiles':profiles,'sample':len(samples),'cleanSample':sum(p['count'] for p in profiles),'bestCount':len(best),
