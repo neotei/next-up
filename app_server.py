@@ -16,7 +16,7 @@ import rosu_pp_py as rosu
 import recommender
 import patterns
 import fast_recommender
-from remember import RememberCookie, LIFETIME, RENEW_AFTER
+from remember import RememberCookie, LIFETIME, RENEW_AFTER, session_secret
 
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / '.cache'
@@ -24,7 +24,7 @@ CACHE.mkdir(exist_ok=True)
 DEVELOPMENT = os.environ.get('APP_ENV') == 'development'
 PUBLIC_URL = os.environ.get('APP_URL', '').rstrip('/')
 app = Flask(__name__, static_folder=None)
-app.config.update(SECRET_KEY=os.environ.get('SESSION_SECRET') or secrets.token_hex(32),
+app.config.update(SECRET_KEY=session_secret(os.environ.get('SESSION_SECRET'),os.environ.get('OSU_CLIENT_SECRET')),
                   SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=not DEVELOPMENT,
                   SESSION_COOKIE_SAMESITE='Lax', PERMANENT_SESSION_LIFETIME=LIFETIME, MAX_CONTENT_LENGTH=8192)
 REMEMBER = RememberCookie(app.config['SECRET_KEY'])

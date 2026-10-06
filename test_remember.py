@@ -5,7 +5,7 @@ from unittest.mock import patch
 os.environ.update(APP_ENV='development',APP_URL='http://localhost',SESSION_SECRET='synthetic-stable-key',OSU_CLIENT_ID='1',OSU_CLIENT_SECRET='synthetic-client-secret')
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import app_server as s
-from remember import RememberCookie,LIFETIME,CHUNK_SIZE
+from remember import RememberCookie,LIFETIME,CHUNK_SIZE,session_secret
 s.app.config['TESTING']=True
 
 def fixture():
@@ -24,6 +24,12 @@ assert 'Max-Age=2592000' in '\n'.join(response.headers.getlist('Set-Cookie'))
 assert 'synthetic-access' not in remember.value and 'synthetic-refresh' not in remember.value
 assert 'synthetic-access' not in response.get_data(as_text=True)
 assert RememberCookie('different-secret').decode(remember.value) is None
+# Production can derive a stable, domain-separated key from its existing private app secret.
+key=session_secret(None,'synthetic-client-secret')
+assert key==session_secret(None,'synthetic-client-secret') and key!='synthetic-client-secret'
+assert key!=session_secret(None,'different-client-secret')
+first,second=RememberCookie(key).encode(sid,state)
+assert RememberCookie(session_secret(None,'synthetic-client-secret')).decode(first,second)['user']['id']==44
 assert s.REMEMBER.decode(remember.value[:-5]+'wrong') is None
 # A browser may return with only its durable cookie, after both the volatile
 # browser session and all server memory have gone away.

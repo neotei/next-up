@@ -2,12 +2,19 @@
 import base64
 import hashlib
 import json
-import time
+import secrets
 from cryptography.fernet import Fernet, InvalidToken
 
 LIFETIME = 30 * 24 * 3600
 RENEW_AFTER = 24 * 3600
 CHUNK_SIZE = 3400
+
+def session_secret(configured, client_secret):
+    if configured:return configured
+    if client_secret:
+        return hashlib.sha256(b'next-up/flask-session/v1\0'+client_secret.encode()).hexdigest()
+    return secrets.token_hex(32)
+
 
 class RememberCookie:
     def __init__(self, secret):
