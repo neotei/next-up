@@ -11,11 +11,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from flask import Flask, jsonify, redirect, request, session, send_from_directory
+from flask import Flask, jsonify, redirect, request, session, send_from_directory, g
 import rosu_pp_py as rosu
 import recommender
 import patterns
 import fast_recommender
+from remember import RememberCookie, LIFETIME, RENEW_AFTER
 
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / '.cache'
@@ -25,7 +26,10 @@ PUBLIC_URL = os.environ.get('APP_URL', '').rstrip('/')
 app = Flask(__name__, static_folder=None)
 app.config.update(SECRET_KEY=os.environ.get('SESSION_SECRET') or secrets.token_hex(32),
                   SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=not DEVELOPMENT,
-                  SESSION_COOKIE_SAMESITE='Lax', MAX_CONTENT_LENGTH=8192)
+                  SESSION_COOKIE_SAMESITE='Lax', PERMANENT_SESSION_LIFETIME=LIFETIME, MAX_CONTENT_LENGTH=8192)
+REMEMBER = RememberCookie(app.config['SECRET_KEY'])
+REMEMBER_NAME = 'next_up_remember' if DEVELOPMENT else '__Host-next_up_remember'
+REMEMBER_PART = REMEMBER_NAME + '_part'
 SESSIONS = {}
 LOCK = threading.RLock()
 NETWORK_LOCK = threading.Lock()
@@ -51,23 +55,35 @@ def remote(url, data=None, headers=None, method=None):
             message = {401: 'Your osu! session expired; sign in again.',
                        403: 'osu! denied access to this resource.',
                        429: 'osu! is limiting requests; please try again later.'}
+            if (url.endswith('/oauth/token') and error.code in (400,401)) or error.code==401:
+                raise AuthorizationExpired('Your osu! sign-in expired; connect your profile again.') from None
             raise ValueError(message.get(error.code, 'osu! could not complete this request.')) from None
         except (urllib.error.URLError, TimeoutError):
             raise ValueError('osu! could not be reached; please try again later.') from None
 
 
-def api(path, state):
-    token = state['token']
-    if time.time() >= token['expires']:
-        value = json.loads(remote('https://osu.ppy.sh/oauth/token', json.dumps({
-            'client_id': os.environ['OSU_CLIENT_ID'], 'client_secret': os.environ['OSU_CLIENT_SECRET'],
-            'grant_type': 'refresh_token', 'refresh_token': token['refresh_token']}).encode(),
-            {'Content-Type': 'application/json'}))
-        token.update(access_token=value['access_token'], refresh_token=value['refresh_token'],
+class AuthorizationExpired(ValueError):
+    pass
+
+
+def ensure_token(state):
+    # Score jobs and browser polling share this lock so a refresh token is rotated once.
+    with state.setdefault('_token_lock',threading.RLock()):
+        token=state['token']
+        if time.time() < token.get('expires',float('inf')):return
+        value=json.loads(remote('https://osu.ppy.sh/oauth/token',json.dumps({
+            'client_id':os.environ['OSU_CLIENT_ID'],'client_secret':os.environ['OSU_CLIENT_SECRET'],
+            'grant_type':'refresh_token','refresh_token':token['refresh_token']}).encode(),
+            {'Content-Type':'application/json'}))
+        token.update(access_token=value['access_token'],refresh_token=value['refresh_token'],
                      expires=time.time()+value['expires_in']-60)
-    return json.loads(remote('https://osu.ppy.sh/api/v2/'+path, headers={
-        'Authorization': 'Bearer '+token['access_token'], 'Accept': 'application/json',
-        'x-api-version': '20220705'}))
+
+
+def api(path, state):
+    ensure_token(state)
+    return json.loads(remote('https://osu.ppy.sh/api/v2/'+path,headers={
+        'Authorization':'Bearer '+state['token']['access_token'],'Accept':'application/json',
+        'x-api-version':'20220705'}))
 
 
 def map_file(beatmap_id):
@@ -83,15 +99,68 @@ def map_file(beatmap_id):
     return beatmap
 
 
+def forget(state=None):
+    with LOCK:
+        if state:state['cancelled']=True
+        SESSIONS.pop(session.get('sid'),None)
+        session.clear()
+        g.forget_remember=True
+        g.auth_state=None
+
+
 def current():
     with LOCK:
-        state = SESSIONS.get(session.get('sid'))
-        if not state or state['expires'] < time.time():
-            if state: SESSIONS.pop(session.get('sid'), None)
-            session.pop('sid', None)
-            return None
-        state['expires'] = time.time()+TTL
+        sid=session.get('sid');state=SESSIONS.get(sid)
+        first=request.cookies.get(REMEMBER_NAME,'')
+        saved=REMEMBER.decode(first,request.cookies.get(REMEMBER_PART,'')) if first else None
+        if saved:
+            g.remembered_version=REMEMBER.version(saved)
+            g.remembered_at=saved['issued']
+        if state and state.get('revoked'):
+            forget(state);return None
+        if state and (state.get('cancelled') or state['expires']<time.time()):
+            state['cancelled']=True
+            SESSIONS.pop(sid,None);state=None
+        if not state:
+            if saved:
+                sid=saved['sid'];state=SESSIONS.get(sid)
+                if not state or state.get('cancelled'):
+                    if len(SESSIONS)>=MAX_SESSIONS:
+                        oldest=min(SESSIONS,key=lambda k:SESSIONS[k]['expires'])
+                        SESSIONS.pop(oldest)['cancelled']=True
+                    state={'user':saved['user'],'token':saved['token'],'expires':time.time()+TTL,
+                           'prefs':{'max_stars':12,'blocked_ids':[],'mod_caps':{}},'result':None,
+                           'status':{'busy':False,'message':'','error':None},'csrf':secrets.token_urlsafe(32),
+                           'revision':0,'last_build':0,'remembered_at':saved['issued']}
+                    state['_remember_version']=REMEMBER.version(state)
+                    SESSIONS[sid]=state
+                session.clear();session['sid']=sid;session.permanent=True
+            else:
+                session.pop('sid',None)
+                if first:g.forget_remember=True
+                return None
+        state['expires']=time.time()+TTL
+        session.permanent=True
+        g.auth_state=state
         return state
+
+
+def write_remember(response):
+    options={'path':'/','secure':not DEVELOPMENT,'httponly':True,'samesite':'Lax'}
+    if getattr(g,'forget_remember',False):
+        response.delete_cookie(REMEMBER_NAME,**options)
+        response.delete_cookie(REMEMBER_PART,**options)
+        return
+    state=getattr(g,'auth_state',None)
+    if not state or state.get('cancelled') or not state['token'].get('refresh_token'):return
+    with state.setdefault('_token_lock',threading.RLock()):
+        version=REMEMBER.version(state)
+        if version==getattr(g,'remembered_version',None) and time.time()-getattr(g,'remembered_at',0)<RENEW_AFTER:return
+        first,second=REMEMBER.encode(session['sid'],state)
+        response.set_cookie(REMEMBER_NAME,first,max_age=LIFETIME,**options)
+        if second:response.set_cookie(REMEMBER_PART,second,max_age=LIFETIME,**options)
+        else:response.delete_cookie(REMEMBER_PART,**options)
+        state['_remember_version']=version;state['remembered_at']=time.time()
 
 
 def reference_candidates(snapshot,limit=24):
@@ -166,6 +235,7 @@ def build(state):
             snapshot['enriched']=True
         publish()
     except Exception as error:
+        if isinstance(error,AuthorizationExpired):state['revoked']=True
         state['status']['error'] = str(error) if isinstance(error, ValueError) else 'The list could not be calculated; please try again.'
     finally:
         state['status']['busy'] = False
@@ -189,6 +259,7 @@ def start_build(state):
 
 @app.after_request
 def protect(response):
+    write_remember(response)
     response.headers['Cache-Control'] = 'no-store'
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -214,6 +285,15 @@ def read_state():
     if not state:
         return jsonify(configured=False, available=available, username='', result=None,
                        state={'busy':False,'message':'','error':None}, csrf=None)
+    try:
+        # Renew on the browser request before handing expired authorization to a background job.
+        ensure_token(state)
+    except AuthorizationExpired:
+        forget(state)
+        return jsonify(configured=False,available=available,username='',result=None,
+                       state={'busy':False,'message':'','error':'Your osu! sign-in expired; connect your profile again.'},csrf=None)
+    except ValueError as error:
+        state['status']['error']=str(error)
     with LOCK:
         return jsonify(configured=True, available=available, username=state['user']['username'],
                        result=state['result'], state=dict(state['status']),
@@ -269,6 +349,8 @@ def callback():
             session.clear()
             session['sid'] = secrets.token_urlsafe(32)
             SESSIONS[session['sid']] = state
+            session.permanent=True
+            g.auth_state=state
         # Restore only non-credential preferences from this browser before the first build.
         return redirect('/?connected=1')
     except Exception:
@@ -286,12 +368,15 @@ def change(action):
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload,dict): return jsonify(error='Invalid request.'),400
     try:
+        if action == 'disconnect':
+            forget(state)
+            try:
+                ensure_token(state)
+                remote('https://osu.ppy.sh/api/v2/oauth/tokens/current',headers={
+                    'Authorization':'Bearer '+state['token']['access_token'],'Accept':'application/json'},method='DELETE')
+            except ValueError:pass
+            return jsonify(ok=True)
         with LOCK:
-            if action == 'disconnect':
-                state['cancelled'] = True
-                SESSIONS.pop(session.get('sid'),None)
-                session.clear()
-                return jsonify(ok=True)
             if action == 'refresh':
                 start_build(state)
             elif action == 'preferences':

@@ -1,4 +1,4 @@
-/* OAuth tokens and recommendations stay in the server session. */
+/* OAuth is restored by an encrypted HttpOnly cookie; JavaScript stores only map preferences. */
 (()=>{
  const service=document.documentElement.dataset.service||'';
  if(service&&location.origin!==new URL(service).origin){location.replace(service+location.search);return;}
@@ -17,9 +17,9 @@
   let response;
   try{response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error();}
   catch{return {ok:true,json:async()=>({configured:false,available:false,username:'',result:null,state:{busy:false,message:'',error:null}})};}
-  const data=await response.json();csrf=data.csrf||'';
+  const data=await response.json();const previousCsrf=csrf;csrf=data.csrf||'';
   if(data.configured){
-   if(userId!==data.userId){userId=data.userId;restored=false;}
+   if(userId!==data.userId||previousCsrf!==csrf){userId=data.userId;restored=false;}
    if(!restored){restored=true;await post('/api/preferences',read());if(!data.result&&!data.state.busy){await post('/api/refresh');data.state={busy:true,message:'Finding maps from your lazer scores…',error:null};}}
   }else{userId=null;restored=false;}
   return {ok:true,json:async()=>data};
