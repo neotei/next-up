@@ -118,7 +118,7 @@ def select(user,best,recent,prefs):
                 fcProbability=farm_fit['fcProbability'],confidence=confidence,accuracyLow=farm_fit['accuracyLow'],accuracyHigh=farm_fit['accuracyHigh'],
                 farmEvidence=round(m['farm']['weight'],6),topScoreUse=m['farm']['topScoreUse'],
                 retrySeconds=round(f['length']),efficiency=round(efficiency,2),goal=f'Full combo at {acc:.1f}% accuracy.',
-                reason=('This map appears repeatedly in community top scores after popularity and age adjustments. ' if m['farm']['weight']>0 else f'Its 99% FC pp is {intrinsic_efficiency:.2f} times the median for this mod and star band in the catalogue. ')+f'Its {round(f["length"])}-second attempts and {pp:.1f} estimated FC pp at {acc:.1f}% make it a pp-efficiency pick within your demonstrated range; an improved score is estimated to add {gain:.2f} weighted profile pp, against your {targets['minScorePP']:.0f} pp target floor.'))
+                reason=('This map appears repeatedly in community top scores after popularity and age adjustments. ' if m['farm']['weight']>0 else f'Its 99% FC pp is {intrinsic_efficiency:.2f} times the median for this mod and star band in the catalogue. ')+f'Its {round(f["length"])}-second attempts and {pp:.1f} estimated FC pp at {acc:.1f}% make it a pp-efficiency pick within your demonstrated range; an improved score is estimated to add {gain:.2f} weighted profile pp, against your {targets["minScorePP"]:.0f} pp target floor.'))
     def distinct(rows,limit):
         seen=set();out=[]
         for row in sorted(rows,key=lambda row:row['priority'],reverse=True):
