@@ -94,6 +94,29 @@ def current():
         return state
 
 
+def reference_candidates(snapshot,limit=24):
+    selected=[];seen=set()
+    for source,budget in (('best',16),('recent',8)):
+        buckets=collections.defaultdict(list)
+        ordered=sorted(snapshot[source],key=lambda x:(x.get('pp') or 0) if source=='best' else fast_recommender.model.score_time(x),reverse=True)
+        for score in ordered:
+            if not recommender.supported(score) or not score.get('beatmap'):continue
+            key=(score['beatmap']['id'],recommender.signature(fast_recommender.canonical(score.get('mods',[]))))
+            if key in fast_recommender.INDEX or key in fast_recommender.REFERENCE_FEATURES:continue
+            band=int(score['beatmap'].get('difficulty_rating',0))
+            buckets[(key[1],bool(score.get('passed')),band)].append((key,score))
+        taken=0
+        for depth in range(16):
+            for values in buckets.values():
+                if depth>=len(values):continue
+                key,score=values[depth]
+                if key in seen:continue
+                seen.add(key);selected.append((key,score));taken+=1
+                if taken>=budget or len(selected)>=limit:break
+            if taken>=budget or len(selected)>=limit:break
+    return selected
+
+
 def build(state):
     try:
         if state.get('cancelled'): return
@@ -125,30 +148,20 @@ def build(state):
             combined={s.get('id'):s for s in snapshot['recent']+prior if s.get('id') is not None}
             snapshot['recent']=list(combined.values())[:2000]
             state['history']=snapshot['recent']
-            candidates=collections.defaultdict(list)
-            for score in snapshot['recent']+snapshot['best']:
-                if not recommender.supported(score) or not score.get('beatmap'):continue
-                key=(score['beatmap']['id'],recommender.signature(fast_recommender.canonical(score.get('mods',[]))))
-                if key in fast_recommender.INDEX or key in fast_recommender.REFERENCE_FEATURES:continue
-                candidates[(key[1],bool(score.get('passed')))].append((key,score))
-            # Round-robin mods and successes/failures, not three owner-like top scores.
-            selected=[];seen=set()
-            for depth in range(6):
-                for values in candidates.values():
-                    ordered=sorted(values,key=lambda x:(not x[1].get('passed'),-x[1].get('accuracy',0)))
-                    if depth>=len(ordered):continue
-                    key,score=ordered[depth]
-                    if key in seen:continue
-                    seen.add(key);selected.append((key,score))
-            for key,score in selected[:8]:
+            selected=reference_candidates(snapshot)
+            learned=0
+            for key,score in selected:
                 if state.get('cancelled'):return
-                state['status']['message']='Learning uncatalogued performance references; your initial list remains available…'
+                state['status']['message']='Learning top-play and recent-pattern references; your initial list remains available…'
                 try:
-                    feature=recommender.features(map_file(key[0]),score['beatmap'],score.get('mods',[]))
+                    beatmap=map_file(key[0])
+                    feature=recommender.features(beatmap,score['beatmap'],score.get('mods',[]))
                     feature.pop('_difficulty',None)
-                    feature['bpm']=map_file(key[0]).bpm*feature['rate']
+                    feature['bpm']=beatmap.bpm*feature['rate']
                     feature.update(patterns.describe(CACHE/f'{key[0]}.osu',feature['rate']))
                     fast_recommender.REFERENCE_FEATURES[key]=feature
+                    learned+=1
+                    if learned%6==0:publish()
                 except (ValueError,OSError,RuntimeError):continue
             snapshot['enriched']=True
         publish()

@@ -63,6 +63,12 @@ function render(selectionOnly=false){
  $('#table-title').textContent=section==='farm'?'100% FC / predicted FC':'Map library';
  $('#method-details').textContent=section==='farm'?'Farm combines community top-score prevalence, relative pp efficiency, estimated FC likelihood, profile gain and retry duration. Max pp means a 100% FC, while predicted pp assumes an FC at the displayed accuracy; both exclude bonus pp. The likelihood is a local heuristic rather than a validated probability.':'Practice compares recent passes and complete failures under the same mods, with newer results carrying more weight. A focus needs several comparable observations across different maps; otherwise the session uses balanced control. Each candidate holds other demands stable while introducing a manageable challenge. Early quits do not supply full-map accuracy, and UR requires replay hit errors.';
 
+ if(result){
+  const coverage=result.featureCoverage,targets=result.farmTargets;
+  const bands=result.performance?.modProfiles||[];
+  $('#method-details').innerHTML=`<p>${esc($('#method-details').textContent)}</p>${targets&&section==='farm'?`<p>Farm score floor: ${targets.minScorePP.toFixed(0)} pp, based on your top-score distribution. Targets must also offer at least +${targets.minGain.toFixed(1)} estimated weighted pp.</p>`:''}${coverage?`<p>Top-play features matched: ${coverage.matchedBest} / ${coverage.supportedBest}. More references may be learned in the background.</p>`:''}${bands.length?`<table class="profile-bands"><thead><tr><th>Mods</th><th>Typical AR</th><th>Bursts</th><th>Streams</th></tr></thead><tbody>${bands.map(p=>`<tr><td>${esc(p.modKey==='[]'?'NM':JSON.parse(p.modKey).map(x=>x.acronym).join('+'))}</td><td>${p.arBand[0].toFixed(1)}–${p.arBand[2].toFixed(1)}</td><td>${p.burstBpmBand[2]?Math.round(p.burstBpmBand[2])+' BPM':'n/a'}</td><td>${p.streamBpmBand[2]?Math.round(p.streamBpmBand[2])+' BPM':'n/a'}</td></tr>`).join('')}</tbody></table><p>BPM values describe patterns in successful maps, rather than a measured personal maximum. UR requires replay hit errors.</p>`:''}`;
+ }
+
  renderTraining();
  $('#total-count').textContent=maps.length;
  const setups=[...new Set(maps.map(m=>m.mods))];
