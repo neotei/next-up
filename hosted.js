@@ -20,7 +20,7 @@
   const data=await response.json();const previousCsrf=csrf;csrf=data.csrf||'';
   if(data.configured){
    if(userId!==data.userId||previousCsrf!==csrf){userId=data.userId;restored=false;}
-   if(!restored){restored=true;await post('/api/preferences',read());if(!data.result&&!data.state.busy){await post('/api/refresh');data.state={busy:true,message:'Finding maps from your lazer scores…',error:null};}}
+   if(!restored&&!data.state.busy){restored=true;await post('/api/preferences',read());if(!data.result&&!data.state.busy){await post('/api/refresh');data.state={busy:true,message:'Finding maps from your lazer scores…',error:null};}}
   }else{userId=null;restored=false;}
   return {ok:true,json:async()=>data};
  }};
