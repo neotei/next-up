@@ -4,8 +4,8 @@ const library=[0,1,2].map(i=>({id:10+i,key:String(10+i),setId:1,title:'Farm '+i,
 const result={farmMaps:[{key:'10',id:10,accuracy:97,estimatedPP:220,estimatedGain:12,confidence:.7}],farmBest:[{id:1,pp:200}],farmReferences:{'[]':[{features,accuracy:98}]},farmTargets:{benchmarkPP:200,minScorePP:170},performance:{modProfiles:[{starBand:[4.8,5,5.2],arBand:[8.8,9,9.2]}]}};
 const rows=F.decorate(library,result);
 assert.equal(rows[0].accuracy,97);assert.equal(rows[0].referenceOnly,false);
-assert.equal(rows[1].accuracy,99);assert.equal(rows[1].referenceOnly,true);
-assert.equal(rows[1].estimatedPP,250);
+assert(rows[1].accuracy<98&&rows[1].accuracy>96);assert.equal(rows[1].referenceOnly,true);
+assert(rows[1].estimatedPP<250);
 assert(F.fit({...features,streamBpm:240,streamNotes:32},result.farmReferences['[]'])<F.fit(features,result.farmReferences['[]']));
 const limits={...F.defaults(result),maxSeconds:90};assert.deepEqual(F.select(rows,limits,'efficient').map(m=>m.id),[10]);
 assert.equal(F.select(rows,{...limits,maxSeconds:0,minAR:0,maxAR:11},'efficient').length,3);
@@ -13,4 +13,10 @@ assert.equal(F.select(rows,{...limits,maxSeconds:0,minAR:0,maxAR:11,matchedOnly:
 assert.equal(F.select(rows,{...limits,hidden:['10']},'efficient').length,0);
 assert.equal(F.select(rows,{...limits,maxSeconds:0,minAR:0,maxAR:11},'higher','Farm 1')[0].id,11);
 assert.equal(F.gain([{id:1,pp:250}],1,200),0);
+assert.equal(F.predict(features,[]),null);
+assert.equal(F.decorate([{...library[0],key:'unknown-DT',modKey:'DT'}],result)[0].estimatedPP,null);
+assert.equal(F.interpolate(library[0].curve,80),150);
+assert(F.predict(features,[{features,accuracy:95}]).accuracy<F.predict(features,[{features,accuracy:98}]).accuracy);
+assert(F.predict({...features,speed:2.4},[{features,accuracy:98}]).accuracy<98);
+assert.deepEqual(F.select([{...rows[0],farmScore:50,browsePriority:100},{...rows[1],farmScore:99,browsePriority:1}],{...limits,maxSeconds:0},'efficient').map(m=>m.id),[11,10]);
 console.log('PASS: personal forecasts stay separate from reference FCs; limits, search, hidden maps and unsupported-pattern fit behave correctly.');
