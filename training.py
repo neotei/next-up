@@ -11,7 +11,7 @@ def mod_key(mods):
         normalized.append(value)
     return r.signature(normalized)
 
-def session(maps,best,recent,diagnosis=None):
+def session(maps,best,recent,diagnosis=None,minutes=None):
     if not maps:return None
     pool=[m for m in maps if not m['provisional']] or maps
     focus=(diagnosis or {}).get('focus','Balanced control')
@@ -30,11 +30,30 @@ def session(maps,best,recent,diagnosis=None):
     route=[('warm','Warm up',1,'Finish one relaxed run before moving to the focused maps.',warm)]
     route += [('focus',f'Train {i+1}',2,'Play twice without restarting, then compare your accuracy and misses.',m) for i,m in enumerate(drills)]
     if check:route.append(('check','Check progress',1,'Play once without a retry to see whether the same control carries over.',check))
+    if minutes is not None:
+        minutes=max(10,min(90,int(minutes)))
+        # A stable mod setup avoids turning a training route into a reading test.
+        # Distinct maps and transfer checks prevent an hour of restarting one map.
+        route=[('warm','Warm up',1,'Finish one relaxed run without restarting.',warm)]
+        used={warm['id']};elapsed=warm['length'];block=1
+        training_pool=[m for m in ordered if m['modKey']==lead['modKey'] and m['id'] not in used]
+        check_pool=sorted(training_pool,key=lambda m:(m['stage']=='Stretch',-m['support'],abs(m['stars']-lead['stars'])))
+        while elapsed<minutes*60 and len(route)<60:
+            candidates=[m for m in training_pool if m['id'] not in used]
+            if not candidates:break
+            is_check=len(route)%4==0
+            m=next((m for m in check_pool if m['id'] not in used),candidates[0]) if is_check else candidates[0]
+            used.add(m['id']);plays=1 if is_check else 2
+            role='check' if is_check else 'focus'
+            title='Transfer check' if is_check else f'Train {block}'
+            instruction=('Play once without restarting to test control on a different map.' if is_check else 'Play two complete runs and compare accuracy and misses; avoid grinding one pattern.')
+            if len(route)%5==0:instruction='Take a short break before this map. '+instruction
+            route.append((role,title,plays,instruction,m));elapsed+=m['length']*plays;block+=not is_check
     items=[]
     for role,title,plays,instruction,m in route:
         matching=[s for s in recent if s.get('beatmap',{}).get('id')==m['id'] and mod_key(s.get('mods',[]))==m['modKey']]
         attempts=[{'id':s.get('id'),'accuracy':round(s.get('accuracy',0)*100,2),'misses':r.miss_count(s),'passed':bool(s.get('passed'))} for s in matching[:3]]
         items.append({'key':m['key'],'role':role,'title':title,'plays':plays,'instruction':instruction,'attempts':attempts})
-    return {'version':2,'focus':focus,'displayFocus':{'Tapping demand':'Tapping control','Long-run consistency':'Staying consistent','Balanced control':'Build control','Reading range':'Reading patterns','Dense patterns':'Busy patterns'}.get(focus,focus),'evidence':(diagnosis or {}).get('evidence','More comparable results are needed before choosing a specific weakness.'),
+    return {'version':3 if minutes is not None else 2,'requestedMinutes':minutes,'limited':bool(minutes and sum(m['length']*plays for _,_,plays,_,m in route)<minutes*60),'focus':focus,'displayFocus':{'Tapping demand':'Tapping control','Long-run consistency':'Staying consistent','Balanced control':'Build control','Reading range':'Reading patterns','Dense patterns':'Busy patterns'}.get(focus,focus),'evidence':(diagnosis or {}).get('evidence','More comparable results are needed before choosing a specific weakness.'),
             'minutes':max(1,round(sum(m['length']*plays for _,_,plays,_,m in route)/60)),'items':items,
             'review':'Refresh your scores after the session to compare complete runs under the same mods. Fewer misses with steady accuracy across different maps is a useful sign of progress.'}

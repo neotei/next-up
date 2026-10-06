@@ -1,4 +1,5 @@
 """Select from public precomputed maps; no map downloads or pp calculation at request time."""
+import bisect
 import collections
 import copy
 import json
@@ -35,6 +36,25 @@ def estimate_pp(m,accuracy):
     for (lo,p),(hi,q) in zip(points,points[1:]):
         if lo<=accuracy<=hi:return p+(q-p)*(accuracy-lo)/(hi-lo)
     return points[0][1] if accuracy<points[0][0] else points[-1][1]
+
+def browse_catalog():
+    """Public precomputed variants, with a catalogue-relative farm score."""
+    weights=sorted(m['farm']['weight'] for m in MAPS if m['curve'] and m['farm']['weight']>0)
+    rows=[]
+    for m in MAPS:
+        if not m['curve']:continue
+        f=m['features'];key=r.signature(m['mods']);weight=m['farm']['weight']
+        percentile=bisect.bisect_right(weights,weight)/max(1,len(weights)) if weight>0 else 0
+        efficiency=m['curve']['99']/max(1,PP_MEDIANS.get((key,round(f['stars']*2)),m['curve']['99']))
+        shortness=min(1,60/max(30,f['length']))
+        # Community overweightness leads; duration and relative pp yield reward
+        # quick repeats. This is our 0-100 score, not osu!pps' raw units.
+        farm_score=100*(.75*percentile+.15*shortness+.1*min(1,efficiency/1.5))
+        rows.append({'id':m['id'],'setId':m['setId'],'title':m['title'],'artist':m['artist'],'version':m['version'],
+            'mods':r.label(m['mods']),'modSettings':m['mods'],'modKey':key,'key':str(m['id'])+'|'+key,
+            'features':f,'curve':m['curve'],'farmScore':round(farm_score,1),'farmEvidence':weight,
+            'efficiency':round(efficiency,3),'topScoreUse':m['farm']['topScoreUse']})
+    return {'version':1,'source':'https://github.com/grumd/osu-pps','maps':rows}
 
 def farm_effort(gain,completion,length,confidence,efficiency,crowd_weight):
     # Charge a full run plus restart overhead per attempt, rather than assuming
@@ -150,7 +170,7 @@ def select(user,best,recent,prefs):
     for row in mixed:
         if row['id'] in seen:continue
         seen.add(row['id']);practice_rows.append(row)
-        if len(practice_rows)>=60:break
+        if len(practice_rows)>=240:break
     # Retain both rankings so larger gains do not get lost behind efficient picks.
     efficient=distinct([row for row in farm if not row['stretch']],180)
     higher=distinct([dict(row,priority=row['higherPriority']) for row in farm],180)
@@ -163,8 +183,8 @@ def select(user,best,recent,prefs):
                'count':sum(model.success(a) for a in refs),'minAR':floors[key],
                'accuracy':round(statistics.median(a['score']['accuracy']*100 for a in refs),2)}
               for key,refs in groups.items() if any(model.success(a) for a in refs)]
-    return {'algorithmVersion':10,'farmTargets':targets,'featureCoverage':{'matchedBest':sum((s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in INDEX or (s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in REFERENCE_FEATURES for s in best if r.supported(s)), 'supportedBest':sum(r.supported(s) for s in best)},'performance':model.profile([a for refs in groups.values() for a in refs]),'matchedSample':sum(len(refs) for refs in groups.values()),'demo':False,'user':user['username'],'userId':user['id'],
-        'practiceAttempts':{str(mid)+'|'+key:[{'id':s.get('id'),'time':model.score_time(s),'accuracy':round(s.get('accuracy',0)*100,2),'misses':r.miss_count(s),'passed':bool(s.get('passed'))} for s in values[:5]] for (mid,key),values in attempts.items()},'practiceSession':training.session(practice_rows,best,recent,diagnosis),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
+    return {'algorithmVersion':11,'farmTargets':targets,'featureCoverage':{'matchedBest':sum((s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in INDEX or (s.get('beatmap',{}).get('id'),r.signature(canonical(s.get('mods',[])))) in REFERENCE_FEATURES for s in best if r.supported(s)), 'supportedBest':sum(r.supported(s) for s in best)},'performance':model.profile([a for refs in groups.values() for a in refs]),'matchedSample':sum(len(refs) for refs in groups.values()),'demo':False,'user':user['username'],'userId':user['id'],
+        'practiceAttempts':{str(mid)+'|'+key:[{'id':s.get('id'),'time':model.score_time(s),'accuracy':round(s.get('accuracy',0)*100,2),'misses':r.miss_count(s),'passed':bool(s.get('passed'))} for s in values[:5]] for (mid,key),values in attempts.items()},'farmReferences':{key:[{'features':a['features'],'accuracy':a['score'].get('accuracy',0)*100} for a in sorted((a for a in refs if model.success(a)),key=lambda a:(not a.get('topPlay'),-a['weight']))[:16]] for key,refs in groups.items()},'farmBlocked':list(blocked),'farmBest':[{'id':mid,'pp':pp} for mid,pp in best_by_map(best).items()],'practicePlans':{str(minutes):training.session(practice_rows,best,recent,diagnosis,minutes=minutes) for minutes in (20,40,60)},'practiceSession':training.session(practice_rows,best,recent,diagnosis,minutes=40),'profilePP':round(user.get('statistics',{}).get('pp',0)),'maps':practice_rows,'farmMaps':farm_rows,
         'mode':'practice','maxStars':cap,'comfortableCeiling':max((p['ceiling'] for p in profiles),default=cap),
         'profiles':profiles,'sample':len(samples),'cleanSample':sum(p['count'] for p in profiles),'bestCount':len(best),
         'minAR':min(floors.values(),default=9.5),'updated':time.time(),
@@ -188,3 +208,11 @@ def farm_targets(best):
     cutoff=values[99] if len(values)>=100 else 0
     return {'minScorePP':round(max(cutoff,benchmark*.85),2),'minGain':round(max(.5,benchmark*.0025),2),
             'top100Cutoff':round(cutoff,2),'benchmarkPP':round(benchmark,2),'knownBest':len(values)}
+
+
+def best_by_map(scores):
+    values={}
+    for score in scores:
+        mid=score.get('beatmap_id') or score.get('beatmap',{}).get('id')
+        if mid is not None:values[mid]=max(values.get(mid,0),score.get('pp') or 0)
+    return values

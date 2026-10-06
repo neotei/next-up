@@ -2,6 +2,7 @@
 import copy
 import collections
 import json
+import gzip
 import math
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from flask import Flask, jsonify, redirect, request, session, send_from_directory, g
+from flask import Flask, jsonify, redirect, request, session, send_from_directory, g, Response
 import rosu_pp_py as rosu
 import recommender
 import patterns
@@ -260,7 +261,7 @@ def start_build(state):
 @app.after_request
 def protect(response):
     write_remember(response)
-    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Cache-Control'] = 'public, max-age=86400' if request.path=='/api/farm-library' else 'no-store'
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
@@ -272,6 +273,13 @@ def protect(response):
 def large(_error):
     return jsonify(error='The request was too large.'), 413
 
+
+# Public map data is shared across sessions and compressed once at startup.
+FARM_LIBRARY=gzip.compress(json.dumps(fast_recommender.browse_catalog(),separators=(',',':')).encode())
+
+@app.get('/api/farm-library')
+def farm_library():
+    return Response(FARM_LIBRARY,mimetype='application/json',headers={'Content-Encoding':'gzip','Vary':'Accept-Encoding'})
 
 @app.get('/health')
 def health():
@@ -392,8 +400,10 @@ def change(action):
                 state['prefs'] = {'max_stars':cap,'blocked_ids':blocked,'mod_caps':caps}
                 if state['result']:
                     state['result']['maxStars']=cap
+                    state['result']['farmBlocked']=blocked
                     for list_key in ('maps','farmMaps'):
                         state['result'][list_key]=[m for m in state['result'].get(list_key,[]) if m['id'] not in blocked and m['stars']<=min(cap,caps.get(m['modKey'],12))]
+                    state['result']['practicePlans']={str(minutes):fast_recommender.training.session(state['result'].get('maps',[]),[],[],state['result'].get('practiceSession'),minutes=minutes) for minutes in (20,40,60)}
                     state['revision']+=1
             elif action == 'feedback':
                 if state['status']['busy']: return jsonify(error='Wait for the current calculation to finish.'),409
@@ -410,7 +420,9 @@ def change(action):
                 if snapshot:
                     state['result']=fast_recommender.select(state['user'],snapshot['best'],snapshot['recent'],prefs)
                 else:
-                    state['result']['practiceSession']=fast_recommender.training.session(state['result'].get('maps',[]),[],[])
+                    state['result']['farmBlocked']=prefs['blocked_ids']
+                    state['result']['practicePlans']={str(minutes):fast_recommender.training.session(state['result'].get('maps',[]),[],[],state['result'].get('practiceSession'),minutes=minutes) for minutes in (20,40,60)}
+                    state['result']['practiceSession']=state['result']['practicePlans']['40']
                 state['revision']+=1
                 return jsonify(ok=True,limit=prefs['mod_caps'][row['modKey']],preferences=prefs)
             elif action == 'reset-feedback':
@@ -431,6 +443,6 @@ def home():
 @app.get('/<path:name>')
 def assets(name):
     # A static host must never expose the server code, cached maps or user state.
-    if name not in {'style.css','app.js','hosted.js','favicon.ico'}:
+    if name not in {'style.css','app.js','hosted.js','farm-browser.js','favicon.ico'}:
         return jsonify(error='Not found.'),404
     return send_from_directory(ROOT,name)

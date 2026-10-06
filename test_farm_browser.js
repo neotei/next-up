@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict'),F=require('./farm-browser.js');
+const features={stars:5,aim:2,speed:2,density:3,ar:9,cs:4,length:60,bpm:180,burstBpm:180,streamBpm:0,streamNotes:4,slider:.3};
+const library=[0,1,2].map(i=>({id:10+i,key:String(10+i),setId:1,title:'Farm '+i,artist:'A',version:'Insane',modKey:'[]',mods:'NM',modSettings:[],farmScore:90-i*10,farmEvidence:1,features:{...features,ar:i===2?7:9,length:i===1?180:60},curve:{90:150,99:250,100:280}}));
+const result={farmMaps:[{key:'10',id:10,accuracy:97,estimatedPP:220,estimatedGain:12,confidence:.7}],farmBest:[{id:1,pp:200}],farmReferences:{'[]':[{features,accuracy:98}]},farmTargets:{benchmarkPP:200,minScorePP:170},performance:{modProfiles:[{starBand:[4.8,5,5.2],arBand:[8.8,9,9.2]}]}};
+const rows=F.decorate(library,result);
+assert.equal(rows[0].accuracy,97);assert.equal(rows[0].referenceOnly,false);
+assert.equal(rows[1].accuracy,99);assert.equal(rows[1].referenceOnly,true);
+assert.equal(rows[1].estimatedPP,250);
+assert(F.fit({...features,streamBpm:240,streamNotes:32},result.farmReferences['[]'])<F.fit(features,result.farmReferences['[]']));
+const limits={...F.defaults(result),maxSeconds:90};assert.deepEqual(F.select(rows,limits,'efficient').map(m=>m.id),[10]);
+assert.equal(F.select(rows,{...limits,maxSeconds:0,minAR:0,maxAR:11},'efficient').length,3);
+assert.equal(F.select(rows,{...limits,maxSeconds:0,minAR:0,maxAR:11,matchedOnly:true},'efficient').length,1);
+assert.equal(F.select(rows,{...limits,hidden:['10']},'efficient').length,0);
+assert.equal(F.select(rows,{...limits,maxSeconds:0,minAR:0,maxAR:11},'higher','Farm 1')[0].id,11);
+assert.equal(F.gain([{id:1,pp:250}],1,200),0);
+console.log('PASS: personal forecasts stay separate from reference FCs; limits, search, hidden maps and unsupported-pattern fit behave correctly.');
